@@ -39,7 +39,20 @@ jobs:
       - name: Build site dataset
         run: python pipeline/build_site_data.py --report
 
+      - name: Fingerprint the cession layer
+        id: fingerprint
+        run: echo "hash=$(sha256sum data/raw/tribal_cessions.geojson | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache relief sheets
+        uses: actions/cache@v4
+        with:
+          path: |
+            site/data/terrain
+            site/data/terrain.json
+          key: relief-${{ steps.fingerprint.outputs.hash }}
+
       - name: Render relief sheets
+        if: ${{ !hashFiles('site/data/terrain.json') != '' }}
         run: python pipeline/build_terrain.py --all
 
       - name: Export Commons-ready SVGs

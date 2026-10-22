@@ -33,40 +33,41 @@ MAX_ZOOM = 13
 MIN_ZOOM = 5
 BAND_COUNT = 24
 SHADE_COUNT = 8
+FADE_LEVELS = 2
 CONTOUR_INDEX = BAND_COUNT * SHADE_COUNT
 INDEX_CONTOUR_INDEX = CONTOUR_INDEX + 1
 VOID_INDEX = INDEX_CONTOUR_INDEX + 1
 FADE_INDEX = VOID_INDEX + 1
-PAPER_INDEX = FADE_INDEX + BAND_COUNT
+PAPER_INDEX = FADE_INDEX + BAND_COUNT * FADE_LEVELS
 PALETTE_SIZE = PAPER_INDEX + 1
 
 PAPER_COLOR = (247, 245, 238)
 FADE_FRACTION = 0.72
 PALETTE_ELEVATION = (
-    (116, 138, 100),
-    (121, 142, 106),
-    (127, 147, 112),
-    (132, 151, 118),
-    (138, 156, 124),
-    (144, 161, 130),
-    (149, 165, 137),
-    (155, 170, 143),
-    (161, 175, 149),
-    (166, 179, 155),
-    (172, 184, 161),
-    (178, 189, 167),
-    (183, 193, 174),
-    (189, 198, 180),
-    (195, 203, 186),
-    (200, 207, 192),
-    (206, 212, 198),
-    (212, 217, 204),
-    (217, 221, 211),
-    (223, 226, 217),
-    (229, 231, 223),
-    (234, 235, 229),
-    (240, 240, 235),
-    (246, 245, 242),
+    (104, 132, 92),
+    (109, 136, 96),
+    (115, 140, 101),
+    (120, 144, 106),
+    (126, 148, 111),
+    (132, 152, 115),
+    (137, 156, 120),
+    (143, 160, 125),
+    (149, 164, 130),
+    (154, 168, 135),
+    (160, 172, 139),
+    (166, 176, 144),
+    (171, 181, 149),
+    (177, 185, 154),
+    (183, 189, 158),
+    (188, 193, 163),
+    (194, 197, 168),
+    (200, 201, 173),
+    (205, 205, 178),
+    (211, 209, 182),
+    (217, 213, 187),
+    (222, 217, 192),
+    (228, 221, 197),
+    (234, 226, 202),
 )
 CONTOUR_COLOR = (108, 76, 46)
 INDEX_CONTOUR_COLOR = (72, 48, 26)
@@ -190,9 +191,17 @@ class Terrain:
         path.parent.mkdir(parents=True, exist_ok=True)
         url = TILE_URL.format(z=zoom, x=x, y=y)
         request = urllib.request.Request(url, headers={"User-Agent": "isap/1.0"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            path.write_bytes(response.read())
-        self.downloads += 1
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    path.write_bytes(response.read())
+                self.downloads += 1
+                return
+            except Exception as error:
+                if attempt == 3:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+                log(f"retrying {url}: {error}")
 
     def tile(self, zoom: int, x: int, y: int) -> array:
         key = (zoom, x, y)
@@ -347,13 +356,15 @@ def build_palette() -> list[tuple[int, int, int]]:
     palette.append((150, 160, 172))
     for band in range(BAND_COUNT):
         red, green, blue = PALETTE_ELEVATION[band]
-        palette.append(
-            (
-                int(red + (PAPER_COLOR[0] - red) * FADE_FRACTION),
-                int(green + (PAPER_COLOR[1] - green) * FADE_FRACTION),
-                int(blue + (PAPER_COLOR[2] - blue) * FADE_FRACTION),
+        for level in range(FADE_LEVELS):
+            amount = FADE_FRACTION * (level + 1) / FADE_LEVELS
+            palette.append(
+                (
+                    int(red + (PAPER_COLOR[0] - red) * amount),
+                    int(green + (PAPER_COLOR[1] - green) * amount),
+                    int(blue + (PAPER_COLOR[2] - blue) * amount),
+                )
             )
-        )
     palette.append(PAPER_COLOR)
     return palette
 
@@ -428,7 +439,7 @@ def contour_segments(
 
 def fade_edges(indices: bytearray, valid: array, width: int, height: int) -> None:
     """Feather the sheet into the page so cluster edges do not read as cut rectangles."""
-    edge = max(6, int(min(width, height) * 0.06))
+    edge = max(8, int(min(width, height) * 0.06))
     for row in range(height):
         base = row * width
         for col in range(width):
@@ -436,19 +447,25 @@ def fade_edges(indices: bytearray, valid: array, width: int, height: int) -> Non
             if distance >= edge:
                 continue
             index = base + col
-            if not valid[index]:
-                continue
             weight = distance / edge
-            if weight < 0.3:
+            current = indices[index]
+            if weight < 0.25:
                 indices[index] = PAPER_INDEX
                 continue
-            band = indices[index] // SHADE_COUNT
-            level = indices[index] % SHADE_COUNT
-            if weight < 0.7:
-                indices[index] = FADE_INDEX + band
+            if current >= CONTOUR_INDEX:
+                band = 0
+            else:
+                band = min(current // SHADE_COUNT, BAND_COUNT - 1)
+            if weight < 0.55:
+                indices[index] = FADE_INDEX + band * FADE_LEVELS + (FADE_LEVELS - 1)
                 continue
-            level = int(level * weight)
-            indices[index] = band * SHADE_COUNT + level
+            if weight < 0.8:
+                indices[index] = FADE_INDEX + band * FADE_LEVELS
+                continue
+            if current >= CONTOUR_INDEX:
+                continue
+            level = current % SHADE_COUNT
+            indices[index] = band * SHADE_COUNT + int(level * weight)
 
 
 def draw_line(indices: bytearray, width: int, height: int, x0: float, y0: float, x1: float, y1: float, value: int) -> None:
@@ -648,65 +665,94 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time()
 
     for key in targets:
-        polity = by_key.get(key)
-        if polity is None:
-            log(f"skip {key}: not in dataset")
-            continue
-        intervals = series.get(key, [])
-        if not intervals:
-            continue
-        shard_id = polity["shard"]
-        if shard_id not in shard_cache:
-            shard_path = data_dir / "geom" / f"{shard_id}.json"
-            shard_cache[shard_id] = json.loads(shard_path.read_text(encoding="utf-8")) if shard_path.exists() else {}
-        shard = shard_cache[shard_id]
-
-        boxes = []
-        for item in intervals:
-            geometry = (shard.get(item.get("g"), []) or [None] * (item.get("i", 0) + 1))[item["i"]]
-            if not geometry:
-                continue
-            xs: list[float] = []
-            ys: list[float] = []
-            polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
-            for polygon in polygons:
-                for ring in polygon:
-                    for point in ring:
-                        xs.append(point[0])
-                        ys.append(point[1])
-            if xs:
-                boxes.append((min(xs), min(ys), max(xs), max(ys)))
-        if not boxes:
-            continue
-
-        existing = terrain_index.get(key)
-        if existing and not args.force and all(
-            (out_dir / Path(entry["file"]).name).exists() for entry in existing
-        ):
-            continue
-
-        entries = []
-        for number, bbox in enumerate(cluster_bounds(boxes)):
-            lon0, lat0, lon1, lat1 = bbox
-            span_x = (lon1 - lon0) * 111320.0 * math.cos(math.radians((lat0 + lat1) / 2))
-            span_y = (lat1 - lat0) * 110574.0
-            width = args.width
-            height = max(120, min(900, int(round(width * span_y / max(span_x, 1.0)))))
-            name = f"{key}-{number}.png"
-            entry = render(terrain, bbox, width, height, out_dir / name)
-            entry["file"] = f"terrain/{name}"
-            entries.append(entry)
-        terrain_index[key] = entries
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(
-            json.dumps(terrain_index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
-        )
-        log(f"{polity['name']}: {len(entries)} cluster(s) rendered")
-
+        try:
+            render_nation(
+                key, by_key, series, data_dir, out_dir, index_path, terrain_index, args,
+                terrain, shard_cache,
+            )
+        except Exception as error:
+            log(f"failed {key}: {error}")
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(json.dumps(terrain_index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    log(f"wrote {index_path} ({len(terrain_index)} nations, {terrain.downloads} tiles fetched, {time.time() - started:.0f}s)")
+    index_path.write_text(
+        json.dumps(terrain_index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    log(
+        f"wrote {index_path} ({len(terrain_index)} nations, {terrain.downloads} tiles fetched, "
+        f"{time.time() - started:.0f}s)"
+    )
     return 0
+
+
+def render_nation(
+    key: str,
+    by_key: dict,
+    series: dict,
+    data_dir: Path,
+    out_dir: Path,
+    index_path: Path,
+    terrain_index: dict,
+    args,
+    terrain: "Terrain",
+    shard_cache: dict,
+) -> None:
+    polity = by_key.get(key)
+    if polity is None:
+        log(f"skip {key}: not in dataset")
+        return
+    intervals = series.get(key, [])
+    if not intervals:
+        return
+    shard_id = polity["shard"]
+    if shard_id not in shard_cache:
+        shard_path = data_dir / "geom" / f"{shard_id}.json"
+        shard_cache[shard_id] = (
+            json.loads(shard_path.read_text(encoding="utf-8")) if shard_path.exists() else {}
+        )
+    shard = shard_cache[shard_id]
+
+    boxes = []
+    for item in intervals:
+        geometry = (shard.get(item.get("g"), []) or [None] * (item.get("i", 0) + 1))[item["i"]]
+        if not geometry:
+            continue
+        xs: list[float] = []
+        ys: list[float] = []
+        polygons = (
+            [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+        )
+        for polygon in polygons:
+            for ring in polygon:
+                for point in ring:
+                    xs.append(point[0])
+                    ys.append(point[1])
+        if xs:
+            boxes.append((min(xs), min(ys), max(xs), max(ys)))
+    if not boxes:
+        return
+
+    existing = terrain_index.get(key)
+    if existing and not args.force and all(
+        (out_dir / Path(entry["file"]).name).exists() for entry in existing
+    ):
+        return
+
+    entries = []
+    for number, bbox in enumerate(cluster_bounds(boxes)):
+        lon0, lat0, lon1, lat1 = bbox
+        span_x = (lon1 - lon0) * 111320.0 * math.cos(math.radians((lat0 + lat1) / 2))
+        span_y = (lat1 - lat0) * 110574.0
+        width = args.width
+        height = max(120, min(900, int(round(width * span_y / max(span_x, 1.0)))))
+        name = f"{key}-{number}.png"
+        entry = render(terrain, bbox, width, height, out_dir / name)
+        entry["file"] = f"terrain/{name}"
+        entries.append(entry)
+    terrain_index[key] = entries
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        json.dumps(terrain_index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    log(f"{polity['name']}: {len(entries)} cluster(s) rendered")
 
 
 if __name__ == "__main__":
