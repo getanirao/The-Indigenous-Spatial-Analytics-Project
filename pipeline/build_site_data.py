@@ -31,9 +31,11 @@ from pathlib import Path
 EARTH_RADIUS_KM = 6371.0088
 
 DEFAULT_CESSION_TOLERANCE = 0.01  # cessions are parcel-sized; 0.08 erases many of them
+DEFAULT_STATE_TOLERANCE = 0.02  # state outlines are context, not the subject
 DEFAULT_PRECISION = 3
 
 CESSION_GEOM_KEY = "royce-cessions"
+STATE_GEOM_KEY = "us-states"
 AGGREGATE_KEY = "royce-all"
 AGGREGATE_NAME = "United States — all recorded cessions"
 
@@ -162,6 +164,87 @@ def shard_for(key: str) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:2]
 
 
+def geometry_polygons(geometry: dict) -> list:
+    return [geometry["coordinates"]] if geometry.get("type") == "Polygon" else geometry.get("coordinates", [])
+
+
+def geometry_bbox(geometry: dict) -> tuple[float, float, float, float]:
+    xs: list[float] = []
+    ys: list[float] = []
+    for polygon in geometry_polygons(geometry):
+        for ring in polygon:
+            for point in ring:
+                xs.append(point[0])
+                ys.append(point[1])
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def point_in_ring(x: float, y: float, ring: list) -> bool:
+    inside = False
+    for index in range(len(ring) - 1):
+        x1, y1 = ring[index][0], ring[index][1]
+        x2, y2 = ring[index + 1][0], ring[index + 1][1]
+        if (y1 > y) != (y2 > y):
+            crossing = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x < crossing:
+                inside = not inside
+    return inside
+
+
+def point_in_polygon(x: float, y: float, polygon: list) -> bool:
+    if not polygon or not point_in_ring(x, y, polygon[0]):
+        return False
+    return not any(point_in_ring(x, y, hole) for hole in polygon[1:])
+
+
+def geometry_contains_point(geometry: dict, x: float, y: float) -> bool:
+    return any(point_in_polygon(x, y, polygon) for polygon in geometry_polygons(geometry))
+
+
+def geometries_overlap(first: dict, second: dict) -> bool:
+    ax0, ay0, ax1, ay1 = geometry_bbox(first)
+    bx0, by0, bx1, by1 = geometry_bbox(second)
+    if ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0:
+        return False
+    for geometry, other in ((first, second), (second, first)):
+        for polygon in geometry_polygons(geometry):
+            for ring in polygon:
+                for point in ring:
+                    if geometry_contains_point(other, point[0], point[1]):
+                        return True
+    return False
+
+
+def load_states(path: Path, tolerance: float, precision: int) -> list[dict]:
+    """Read state outlines and prepare them as map context."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    entries = []
+    for feature in payload.get("features", []):
+        properties = feature.get("properties") or {}
+        geometry = feature.get("geometry")
+        if not geometry:
+            continue
+        simplified = simplify_geometry(geometry, tolerance, precision)
+        if simplified is None:
+            continue
+        entries.append(
+            {
+                "name": properties.get("name"),
+                "code": properties.get("code"),
+                "geometry": simplified,
+            }
+        )
+    entries.sort(key=lambda entry: entry["name"] or "")
+    return entries
+
+
+def states_for_geometry(geometry: dict, states: list[dict]) -> list[str]:
+    return [
+        entry["name"]
+        for entry in states
+        if entry.get("name") and geometries_overlap(geometry, entry["geometry"])
+    ]
+
 def load_cessions(
     path: Path,
     tolerance: float,
@@ -217,10 +300,22 @@ def load_cessions(
     return records, {CESSION_GEOM_KEY: seed}, skipped
 
 
-def build(records: list[dict], seed_geometry: dict[str, list], report: bool) -> dict:
+def build(
+    records: list[dict],
+    seed_geometry: dict[str, list],
+    states: list[dict],
+    report: bool,
+) -> dict:
     series: dict[str, list[dict]] = defaultdict(list)
     geometry: dict[str, list] = {key: list(value) for key, value in seed_geometry.items()}
     stats: dict[str, dict] = {}
+
+    cession_states: dict[int, list[str]] = {}
+    if states:
+        for index, cession_geometry in enumerate(seed_geometry.get(CESSION_GEOM_KEY, [])):
+            names = states_for_geometry(cession_geometry, states)
+            if names:
+                cession_states[index] = names
 
     for record in records:
         key = record["key"]
@@ -232,10 +327,12 @@ def build(records: list[dict], seed_geometry: dict[str, list], report: bool) -> 
                 "type": record["type"],
                 "i": record["i"],
                 "g": record["g"],
+                "s": cession_states.get(record["i"], []),
             }
         )
-        entry = stats.setdefault(key, {"names": Counter()})
+        entry = stats.setdefault(key, {"names": Counter(), "states": set()})
         entry["names"][record["name"]] += 1
+        entry["states"].update(cession_states.get(record["i"], []))
 
     polities = []
     for key, intervals in series.items():
@@ -254,6 +351,7 @@ def build(records: list[dict], seed_geometry: dict[str, list], report: bool) -> 
                 "totalArea": round(sum(known), 1) if known else None,
                 "peakArea": max(known) if known else None,
                 "records": len(intervals),
+                "states": sorted(stats[key]["states"]),
                 "shard": shard_for(geom_key),
                 "wikipedia": None,
                 "wikidata": None,
@@ -273,10 +371,15 @@ def build(records: list[dict], seed_geometry: dict[str, list], report: bool) -> 
     for key, geoms in geometry.items():
         if geoms:
             shards[shard_for(key)][key] = geoms
+    if states:
+        shards[shard_for(CESSION_GEOM_KEY)][STATE_GEOM_KEY] = states
 
     if report:
         log(f"records={len(records)} nations={len(polities)} shards={len(shards)}")
         log(f"cession polygons: {len(geometry.get(CESSION_GEOM_KEY, []))}")
+        log(f"state outlines: {len(states)}")
+        matched = sum(1 for names in cession_states.values() if names)
+        log(f"cessions matched to a state: {matched}/{len(cession_states)}")
         for polity in polities[:5]:
             log(
                 f"  {polity['totalArea'] or 0:>12,.0f} km²  {polity['name']} "
@@ -310,6 +413,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cessions", default="data/raw/tribal_cessions.geojson",
                         help="joined Royce/USFS cession GeoJSON")
     parser.add_argument("--out", default="site/data")
+    parser.add_argument("--states", default="data/raw/us_states.geojson",
+                        help="state outlines used as map context; skipped if absent")
+    parser.add_argument("--state-tolerance", type=float, default=DEFAULT_STATE_TOLERANCE,
+                        help="simplification tolerance for state outlines")
     parser.add_argument("--cession-tolerance", type=float, default=DEFAULT_CESSION_TOLERANCE,
                         help="tolerance for cession polygons, which are much smaller")
     parser.add_argument("--precision", type=int, default=DEFAULT_PRECISION,
@@ -334,7 +441,15 @@ def main(argv: list[str] | None = None) -> int:
     if not records:
         raise SystemExit(f"No usable cession features in {cessions_path}.")
 
-    built = build(records, seed, args.report)
+    states: list[dict] = []
+    states_path = Path(args.states)
+    if states_path.exists():
+        states = load_states(states_path, args.state_tolerance, args.precision)
+        log(f"states: {len(states)} outlines from {states_path}")
+    else:
+        log(f"no state outlines at {states_path} (run pipeline/fetch_us_states.py)")
+
+    built = build(records, seed, states, args.report)
 
     source = {
         "name": "Tribal Ceded Lands (U.S. Forest Service)",
@@ -369,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
             "polities": len(built["polities"]),
             "shards": len(built["shards"]),
             "polygons": len(seed.get(CESSION_GEOM_KEY, [])),
+            "states": len(states),
         },
         "simplification": {
             "toleranceDegrees": args.cession_tolerance,

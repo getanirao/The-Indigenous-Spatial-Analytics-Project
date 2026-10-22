@@ -12,6 +12,9 @@ Commons file pages.
 > georeferenced by the U.S. Forest Service with Claudio Saunt — public domain (U.S. Government
 > work).
 >
+> **State outlines:** Natural Earth (public domain, CC0),
+> https://www.naturalearthdata.com — used only as map context for modern state boundaries.
+>
 > **Figure:** *The Indigenous Spatial Analytics Project*,
 > https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project — licensed CC BY-SA 4.0.
 
@@ -21,6 +24,7 @@ Commons file pages.
 | --- | --- | --- | --- |
 | [Tribal Ceded Lands](https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TribalCessionLands_01/MapServer) (US Forest Service) | 2018 revision | Public domain (US Government work) | Cession polygons, dates, signatory nations |
 | Royce, *Indian Land Cessions in the United States* (1899) | [LOC 13023487](https://www.loc.gov/item/13023487/) | Public domain | Underlying schedule and maps |
+| [Natural Earth](https://www.naturalearthdata.com) 50m admin-1 | 5.1.2 | Public domain (CC0) | Modern state boundaries as map context |
 | Claudio Saunt, "Indian Land Cessions" digital companion | 2018 | Public domain (US Government work) | Georeferencing and schedule join |
 
 ## License compatibility

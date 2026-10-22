@@ -17,6 +17,7 @@ belong in the dataset.
 
 ```powershell
 py pipeline\fetch_tribal_cessions.py                # fetch Royce/USFS cessions
+py pipeline\fetch_us_states.py                      # fetch Natural Earth state outlines
 py pipeline\build_site_data.py --report             # 415 nations, 717 polygons
 py pipeline\export_svg.py --top 5                   # Commons-ready SVGs in dist/svg/
 py -m http.server 8000 --directory site             # preview the site
@@ -28,7 +29,7 @@ There is no linter or test suite. Run all of these; they are fast because the pi
 standard library only.
 
 ```powershell
-py -m py_compile pipeline\build_site_data.py pipeline\fetch_tribal_cessions.py pipeline\export_svg.py
+py -m py_compile pipeline\build_site_data.py pipeline\fetch_tribal_cessions.py pipeline\fetch_us_states.py pipeline\export_svg.py
 node --check site\app.js
 py pipeline\build_site_data.py --out <tmp> --report --pretty
 py pipeline\export_svg.py --data <tmp> --out <tmp-svg> --top 3
@@ -61,12 +62,16 @@ Get-ChildItem <tmp-svg>\*.svg | ForEach-Object { [void][xml](Get-Content $_.Full
 7. **Cession geometry is shared.** All cession polygons live in one geometry bucket
    (`royce-cessions`) referenced by each series entry's `g` field. Do not duplicate them per
    nation.
+8. **State context is public domain.** State outlines come from Natural Earth (CC0). Do not
+   substitute a source with noncommercial terms.
 
 ## Data model
 
 `site/data/polities.json` (index + `meta`), `site/data/series.json` (`key` →
-`[{from, to, area, type, i, g}]`), `site/data/geom/<shard>.json` (`geometryKey` → geometry
-array indexed by `i`). Cession keys are `royce-<tribe>`, plus the aggregate `royce-all`.
+`[{from, to, area, type, i, g, s}]`, where `s` lists the states the land now lies in),
+`site/data/geom/<shard>.json` (`geometryKey` → geometry array indexed by `i`, plus
+`us-states` for the state outlines). Cession keys are `royce-<tribe>`, plus the aggregate
+`royce-all`.
 
 ## Conventions
 

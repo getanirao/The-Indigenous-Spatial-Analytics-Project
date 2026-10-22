@@ -34,6 +34,16 @@ There is **no acreage column** in the service, so areas are computed geodesicall
 polygons in the build step. Cession boundaries were not surveyed, and the schedule sometimes
 describes a reserved tract rather than a ceded one; do not treat the totals as acreage figures.
 
+## US state outlines (`data/raw/us_states.geojson`)
+
+```powershell
+py pipeline\fetch_us_states.py           # ~2 MB, 51 states and districts
+```
+
+Pulled from the Natural Earth 50m admin-1 layer (public domain, CC0) and filtered to the 50
+states and the District of Columbia. The build simplifies them and uses them two ways: as the
+map backdrop, and to work out which states each ceded tract falls in today.
+
 ## Verification
 
 Run the build with `--report` to print record counts and the largest nations by total ceded

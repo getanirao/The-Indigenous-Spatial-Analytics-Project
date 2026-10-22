@@ -27,7 +27,8 @@ totals overlap and never partition the national total.
 
 1. **Fetch** — `pipeline/fetch_tribal_cessions.py` queries the US Forest Service "Tribal Ceded
    Lands" ArcGIS service, joins the polygons to Royce's 1899 schedule, and writes
-   `data/raw/tribal_cessions.geojson`.
+   `data/raw/tribal_cessions.geojson`. `pipeline/fetch_us_states.py` pulls Natural Earth
+   (public domain) state outlines for map context.
 2. **Build** — `pipeline/build_site_data.py` turns that into one small static dataset:
    cumulative-cession series per nation, plus simplified geometry in a single shared bucket.
    Pure standard library — no GDAL, no geopandas.
@@ -40,6 +41,7 @@ totals overlap and never partition the national total.
 
 ```powershell
 py pipeline\fetch_tribal_cessions.py     # ~6 MB, 717 US cession polygons
+py pipeline\fetch_us_states.py           # ~2 MB, 51 state outlines
 py pipeline\build_site_data.py --report  # writes site/data/
 py -m http.server 8000 --directory site  # open http://localhost:8000
 ```
@@ -55,9 +57,9 @@ py pipeline\export_svg.py --top 25 --out dist\svg
 
 | File | Contents |
 | --- | --- |
-| `site/data/polities.json` | Index: key, name, year span, total/peak ceded area, shard id, `meta` block |
-| `site/data/series.json` | `{key: [{from, to, area, type, i, g}]}` — one entry per cession record |
-| `site/data/geom/<shard>.json` | `{geometryKey: [<GeoJSON geometry>, ...]}`, addressed by `g` + `i` above |
+| `site/data/polities.json` | Index: key, name, year span, total ceded area, states touched, shard id, `meta` block |
+| `site/data/series.json` | `{key: [{from, to, area, type, i, g, s}]}` — one entry per cession record; `s` lists the states the land now lies in |
+| `site/data/geom/<shard>.json` | `{geometryKey: [<GeoJSON geometry>, ...]}`, addressed by `g` + `i` above, plus `us-states` for the state outlines |
 
 Keys are `royce-<tribe>`, except the national aggregate `royce-all`. All 717 cession polygons
 share one geometry bucket (`royce-cessions`) referenced by each nation's records, so a joint
@@ -77,7 +79,9 @@ records a loss, not a holding, so "area over time" means "total ceded by this da
 - **Shared cessions are credited in full.** Per-nation totals therefore do not add up to the
   national total, and the aggregate is not a sum of the others.
 - **Metric.** "Land" is the area of the recorded polygons, in km², computed geodesically.
-  Records are snapshots at varying timesteps, so series are step functions.
+- **State context is modern.** The state a ceded tract falls in today is computed by
+  intersection with Natural Earth outlines, so it says where the land is now, not which
+  jurisdiction held it in 1866.
 - **Coverage.** The United States only: Canada and Mexico are out of scope until a comparable
   nation-level dataset is added.
 

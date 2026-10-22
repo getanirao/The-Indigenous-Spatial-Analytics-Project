@@ -1,4 +1,4 @@
-// Static viewer for the "Nations' Land Over Time" dataset.
+// Static viewer for the "Native Land Cessions" atlas.
 // No build step, no CDN, no map tiles: hand-rolled SVG only.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -16,9 +16,7 @@ const state = {
   year: 0,
   playing: false,
   timer: null,
-  logScale: false,
   showAll: false,
-  chart: null,
   map: null,
 };
 
@@ -43,29 +41,6 @@ function formatYear(year) {
   return year < 0 ? `${Math.abs(year)} BCE` : `${year} CE`;
 }
 
-function niceTicks(min, max, count) {
-  if (!(max > min)) return [min];
-  const raw = (max - min) / count;
-  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
-  const candidates = [1, 2, 2.5, 5, 10].map((m) => m * magnitude);
-  const step = candidates.find((c) => (max - min) / c <= count) || magnitude * 10;
-  const ticks = [];
-  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-6; v += step) ticks.push(v);
-  return ticks;
-}
-
-function logTicks(min, max) {
-  const ticks = [];
-  const lower = Math.max(1, min);
-  const start = Math.floor(Math.log10(lower));
-  const end = Math.ceil(Math.log10(Math.max(max, 10)));
-  for (let e = start; e <= end; e += 1) {
-    const value = Math.pow(10, e);
-    if (value >= lower * 0.999 && value <= max * 1.001) ticks.push(value);
-  }
-  return ticks.length ? ticks : [lower, max];
-}
-
 function initialOf(name) {
   const match = name.match(/[a-z]/i);
   return match ? match[0].toUpperCase() : "#";
@@ -74,23 +49,12 @@ function initialOf(name) {
 function cacheDom() {
   const ids = [
     "landing", "app", "enter", "enter-link", "back-link", "alpha", "plates",
-    "search", "list-meta", "polity-list", "status", "detail", "polity-name", "polity-meta",
-    "stage-intro", "intro-picks",
-    "stat-area", "stat-share", "stat-window", "stat-area-label", "stat-share-label",
-    "stat-window-label", "chart", "map", "chart-tooltip", "play",
-    "year", "year-label", "log-scale", "show-all", "footer-credit",
+    "search", "list-meta", "polity-list", "index-view", "detail-view", "back-to-index",
+    "polity-name", "polity-meta", "stat-area", "stat-share", "stat-window",
+    "map", "map-note", "cession-rows", "play", "year", "year-label", "show-all",
+    "footer-credit",
   ];
   for (const id of ids) dom[id] = document.getElementById(id);
-}
-
-function showStatus(html, isError = false) {
-  dom.status.innerHTML = html;
-  dom.status.classList.toggle("error", isError);
-  dom.status.hidden = false;
-}
-
-function hideStatus() {
-  dom.status.hidden = true;
 }
 
 async function loadJson(url) {
@@ -110,12 +74,7 @@ async function boot() {
     for (const [key, intervals] of Object.entries(series)) state.series.set(key, intervals);
   } catch (error) {
     openApp();
-    dom["stage-intro"].hidden = true;
-    showStatus(
-      `Dataset not built yet (${error.message}).<br>` +
-        `<code>py pipeline/fetch_tribal_cessions.py &amp;&amp; py pipeline/build_site_data.py</code>`,
-      true,
-    );
+    showError(error);
     return;
   }
 
@@ -126,16 +85,13 @@ async function boot() {
     const bits = [];
     if (counts.polities) bits.push(`${(counts.polities - 1).toLocaleString()} nations`);
     if (counts.polygons) bits.push(`${counts.polygons.toLocaleString()} cession polygons`);
-    bits.push(`${counts.records.toLocaleString()} records`);
     bits.push(`${meta.yearRange[0]} to ${meta.yearRange[1]}`);
     dom["list-meta"].textContent = bits.join(" · ");
   }
 
   renderAlpha();
   renderList("");
-  renderIntro();
   wireEvents();
-  hideStatus();
   renderPlates();
 
   const initial = decodeURIComponent(location.hash.slice(1));
@@ -147,12 +103,13 @@ async function boot() {
   }
 }
 
-function geometryFor(item) {
-  if (!state.shard) return null;
-  const key = item.g || (state.selected ? state.selected.key : null);
-  const bucket = key ? state.shard[key] : null;
-  if (!bucket) return null;
-  return bucket[item.i] || null;
+function showError(error) {
+  const list = dom["polity-list"];
+  clear(list);
+  const li = document.createElement("li");
+  li.className = "hint";
+  li.textContent = `Dataset not built yet (${error.message}).`;
+  list.appendChild(li);
 }
 
 function renderList(query) {
@@ -169,7 +126,6 @@ function renderList(query) {
     const li = document.createElement("li");
     li.className = "hint";
     li.textContent = "No match.";
-    li.style.padding = "0.5rem";
     list.appendChild(li);
     return;
   }
@@ -196,43 +152,6 @@ function renderList(query) {
     fragment.appendChild(li);
   }
   list.appendChild(fragment);
-
-  if (matches.length > LIST_LIMIT) {
-    const li = document.createElement("li");
-    li.className = "hint";
-    li.style.padding = "0.5rem";
-    li.textContent = `Showing first ${LIST_LIMIT} of ${matches.length.toLocaleString()} matches — refine your search.`;
-    list.appendChild(li);
-  }
-}
-
-function renderIntro() {
-  const picks = dom["intro-picks"];
-  if (!picks) return;
-  clear(picks);
-
-  const suggestions = state.polities
-    .filter((polity) => polity.kind === "cession" && polity.key !== "royce-all")
-    .sort((a, b) => b.records - a.records)
-    .slice(0, 3);
-
-  for (const polity of suggestions) {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.addEventListener("click", () => selectPolity(polity.key));
-
-    const name = document.createElement("span");
-    name.textContent = polity.name;
-
-    const meta = document.createElement("span");
-    meta.className = "pick-meta";
-    meta.textContent = `${polity.records.toLocaleString()} cession${polity.records === 1 ? "" : "s"}`;
-
-    button.append(name, meta);
-    li.appendChild(button);
-    picks.appendChild(li);
-  }
 }
 
 async function selectPolity(key) {
@@ -252,12 +171,11 @@ async function selectPolity(key) {
       state.shardCache.set(polity.shard, {});
     }
   }
-  const shard = state.shardCache.get(polity.shard) || {};
-  state.shard = shard;
+  state.shard = state.shardCache.get(polity.shard) || {};
   state.intervals = state.series.get(key) || [];
 
-  dom.detail.hidden = false;
-  dom["stage-intro"].hidden = true;
+  dom["index-view"].hidden = true;
+  dom["detail-view"].hidden = false;
   dom["polity-name"].textContent = polity.name;
   dom["polity-meta"].textContent = describePolity(polity);
 
@@ -271,9 +189,17 @@ async function selectPolity(key) {
     else button.removeAttribute("aria-current");
   }
 
-  renderChart();
+  renderCessionTable();
   renderMap();
   setYear(focus);
+  window.scrollTo({ top: 0 });
+}
+
+function showIndex() {
+  dom["detail-view"].hidden = true;
+  dom["index-view"].hidden = false;
+  state.selected = null;
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 
 function focusYear(polity) {
@@ -315,168 +241,26 @@ function setYear(year) {
   dom["stat-window"].textContent = latest ? formatYear(latest.to) : "none yet";
 
   updateMapVisibility();
-  updateChartCursor();
 }
 
-function chartSegments() {
-  const years = new Set();
-  for (const item of state.intervals) {
-    years.add(item.from);
-    years.add(item.to);
+function renderCessionTable() {
+  const body = dom["cession-rows"];
+  clear(body);
+  const rows = [...state.intervals].sort((a, b) => a.to - b.to);
+  for (const item of rows) {
+    const tr = document.createElement("tr");
+    const year = document.createElement("td");
+    year.className = "cell-year";
+    year.textContent = formatYear(item.to);
+    const area = document.createElement("td");
+    area.className = "cell-area";
+    area.textContent = formatArea(item.area);
+    const states = document.createElement("td");
+    states.className = "cell-states";
+    states.textContent = (item.s || []).join(", ") || "—";
+    tr.append(year, area, states);
+    body.appendChild(tr);
   }
-  const sorted = [...years].sort((a, b) => a - b);
-  const segments = [];
-  for (let i = 0; i < sorted.length; i += 1) {
-    const x0 = sorted[i];
-    const x1 = i + 1 < sorted.length ? sorted[i + 1] : x0;
-    const probe = x1 > x0 ? Math.floor((x0 + x1) / 2) : x0;
-    segments.push({ x0, x1, area: currentArea(probe).area });
-  }
-  return segments;
-}
-
-function renderChart() {
-  const node = dom.chart;
-  clear(node);
-
-  const width = node.clientWidth || 640;
-  const height = 240;
-  const margin = { top: 22, right: 18, bottom: 30, left: 66 };
-  const plotWidth = Math.max(10, width - margin.left - margin.right);
-  const plotHeight = height - margin.top - margin.bottom;
-  node.setAttribute("width", width);
-  node.setAttribute("height", height);
-  node.setAttribute("viewBox", `0 0 ${width} ${height}`);
-
-  const segments = chartSegments();
-  const values = segments.map((seg) => seg.area).filter((area) => area !== null);
-  const rawMax = Math.max(1, ...values);
-  let yMax = rawMax;
-  if (!state.logScale) {
-    const rough = niceTicks(0, rawMax, 4);
-    const roundStep = rough.length > 1 ? rough[1] - rough[0] : rawMax;
-    yMax = Math.max(roundStep, Math.ceil(rawMax / roundStep) * roundStep);
-  }
-  const yMin = state.logScale ? Math.max(1, values.length ? Math.min(...values) : 1) : 0;
-
-  let xMin = state.selected ? state.selected.from : 0;
-  let xMax = state.selected ? state.selected.to : 1;
-  for (const seg of segments) {
-    xMin = Math.min(xMin, seg.x0);
-    xMax = Math.max(xMax, seg.x1);
-  }
-  if (xMax <= xMin) xMax = xMin + 1;
-
-  const sx = (year) => margin.left + ((year - xMin) / (xMax - xMin)) * plotWidth;
-  const sy = (area) => {
-    if (state.logScale) {
-      const lo = Math.log10(yMin);
-      const hi = Math.log10(yMax);
-      return margin.top + plotHeight - ((Math.log10(Math.max(area, yMin)) - lo) / Math.max(1e-9, hi - lo)) * plotHeight;
-    }
-    return margin.top + plotHeight - (area / yMax) * plotHeight;
-  };
-
-  state.chart = { sx, sy, margin, plotWidth, plotHeight, width, height, xMin, xMax, yMax, yMin };
-
-  const grid = svg("g", { class: "chart-grid chart-axis" });
-  const yTicks = state.logScale ? logTicks(yMin, yMax) : niceTicks(0, yMax, 4);
-  for (const tick of yTicks) {
-    const y = sy(tick);
-    grid.appendChild(svg("line", { x1: margin.left, x2: margin.left + plotWidth, y1: y, y2: y }));
-    const label = svg("text", { x: margin.left - 9, y: y + 4, "text-anchor": "end" });
-    label.textContent =
-      tick >= 1e6 ? `${(tick / 1e6).toFixed(tick >= 1e7 ? 0 : 1)}M`
-        : tick >= 1000 ? `${Math.round(tick / 1000)}k`
-          : String(Math.round(tick));
-    grid.appendChild(label);
-  }
-  for (const tick of niceTicks(xMin, xMax, 6)) {
-    const x = sx(tick);
-    grid.appendChild(svg("line", { x1: x, x2: x, y1: margin.top, y2: margin.top + plotHeight }));
-    const label = svg("text", { x, y: height - 10, "text-anchor": "middle" });
-    label.textContent = tick < 0 ? `${Math.abs(tick)} BCE` : `${tick}`;
-    grid.appendChild(label);
-  }
-  node.appendChild(grid);
-
-  const unit = svg("text", { x: margin.left - 9, y: 11, "text-anchor": "end", class: "chart-axis-title" });
-  unit.textContent = "km²";
-  node.appendChild(unit);
-
-  const fillGroup = svg("g");
-  const lineGroup = svg("g");
-  const runs = [];
-  let run = null;
-  for (const seg of segments) {
-    if (seg.area === null) { run = null; continue; }
-    if (!run) { run = []; runs.push(run); }
-    run.push(seg);
-  }
-  const base = sy(state.logScale ? yMin : 0);
-  for (const runSegs of runs) {
-    let d = `M${sx(runSegs[0].x0).toFixed(1)},${sy(runSegs[0].area).toFixed(1)}`;
-    for (let i = 0; i < runSegs.length; i += 1) {
-      const seg = runSegs[i];
-      if (i > 0) d += `H${sx(seg.x0).toFixed(1)}V${sy(seg.area).toFixed(1)}`;
-      d += `H${sx(seg.x1).toFixed(1)}`;
-    }
-    const first = runSegs[0];
-    const last = runSegs[runSegs.length - 1];
-    const close = `L${sx(last.x1).toFixed(1)},${base.toFixed(1)}L${sx(first.x0).toFixed(1)},${base.toFixed(1)}Z`;
-    fillGroup.appendChild(svg("path", { class: "chart-fill", d: d + close }));
-    lineGroup.appendChild(svg("path", { class: "chart-line", d }));
-  }
-  node.append(fillGroup, lineGroup);
-
-  const cursor = svg("g", { id: "chart-cursor", class: "chart-cursor" });
-  cursor.appendChild(svg("line", { x1: 0, x2: 0, y1: margin.top, y2: margin.top + plotHeight }));
-  cursor.appendChild(svg("circle", { cx: 0, cy: 0, r: 3 }));
-  node.appendChild(cursor);
-
-  const hit = svg("rect", { x: margin.left, y: margin.top, width: plotWidth, height: plotHeight, fill: "transparent" });
-  hit.addEventListener("pointermove", onChartPointerMove);
-  hit.addEventListener("pointerleave", () => { dom["chart-tooltip"].hidden = true; });
-  node.appendChild(hit);
-}
-
-function updateChartCursor() {
-  const cursor = dom.chart.querySelector("#chart-cursor");
-  if (!cursor || !state.chart) return;
-  const { sx, sy } = state.chart;
-  const { area } = currentArea(state.year);
-  const x = sx(state.year);
-  const line = cursor.querySelector("line");
-  const dot = cursor.querySelector("circle");
-  line.setAttribute("x1", x);
-  line.setAttribute("x2", x);
-  if (area === null) {
-    dot.setAttribute("opacity", 0);
-    return;
-  }
-  dot.setAttribute("opacity", 1);
-  dot.setAttribute("cx", x);
-  dot.setAttribute("cy", sy(area));
-}
-
-function onChartPointerMove(event) {
-  if (!state.chart) return;
-  const rect = dom.chart.getBoundingClientRect();
-  const { sx, xMin, xMax, margin, plotWidth, width } = state.chart;
-  const ratio = (event.clientX - rect.left - margin.left) / Math.max(1, plotWidth);
-  const year = Math.round(xMin + Math.min(Math.max(ratio, 0), 1) * (xMax - xMin));
-  const { area, count, latest } = currentArea(year);
-  const tooltip = dom["chart-tooltip"];
-  if (area === null) {
-    tooltip.hidden = true;
-    return;
-  }
-  tooltip.hidden = false;
-  tooltip.innerHTML =
-    `<strong>${formatYear(year)}</strong><br>ceded to date ${formatArea(area)}` +
-    `<br>${count.toLocaleString()} cession${count === 1 ? "" : "s"}`;
-  tooltip.style.left = `${Math.min(Math.max(sx(year), 80), width - 80)}px`;
-  tooltip.style.top = `${margin.top - 4}px`;
 }
 
 function eachPoint(geometry, visit) {
@@ -517,11 +301,16 @@ function geometryBounds(geometry) {
   return Number.isFinite(minLon) ? [minLon, minLat, maxLon, maxLat] : null;
 }
 
+function stateOutlines() {
+  const bucket = state.shard ? state.shard["us-states"] : null;
+  return Array.isArray(bucket) ? bucket : [];
+}
+
 function renderMap() {
   const node = dom.map;
   clear(node);
-  const width = node.clientWidth || 640;
-  const height = 340;
+  const width = node.clientWidth || 900;
+  const height = Math.max(360, Math.min(560, Math.round(width * 0.52)));
   node.setAttribute("width", width);
   node.setAttribute("height", height);
   node.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -534,69 +323,96 @@ function renderMap() {
   node.appendChild(defs);
 
   const clipped = svg("g", { "clip-path": `url(#${clipId})` });
-  const group = svg("g", { id: "territories" });
   const toWorld = (lon, lat) => [lon, -lat];
 
+  const stateGroup = svg("g", { class: "map-states" });
+  for (const entry of stateOutlines()) {
+    const path = svg("path", { d: geometryPath(entry.geometry, toWorld), class: "state-outline" });
+    path.dataset.name = entry.name;
+    path.bounds = geometryBounds(entry.geometry);
+    stateGroup.appendChild(path);
+  }
+  clipped.appendChild(stateGroup);
+
+  const group = svg("g", { id: "territories" });
   for (const item of state.intervals) {
     if (item.i === null) continue;
-    const geometry = geometryFor(item);
+    const geometry = (state.shard[item.g] || [])[item.i];
     if (!geometry) continue;
-    const d = geometryPath(geometry, toWorld);
-    if (!d) continue;
-    const path = svg("path", { d, class: "territory", "vector-effect": "non-scaling-stroke" });
-    path.dataset.from = String(item.from);
+    const path = svg("path", { d: geometryPath(geometry, toWorld), class: "cession-outline" });
     path.dataset.to = String(item.to);
+    path.dataset.states = (item.s || []).join("|");
     path.bounds = geometryBounds(geometry);
     group.appendChild(path);
   }
-
   clipped.appendChild(group);
   node.appendChild(clipped);
+
+  const labels = svg("g", { class: "map-labels" });
+  node.appendChild(labels);
+
   node.appendChild(svg("rect", { x: 0.5, y: 0.5, width: width - 1, height: height - 1, class: "map-frame" }));
 
-  const empty = svg("text", { x: width / 2, y: height / 2, "text-anchor": "middle", class: "map-empty" });
-  empty.textContent = "No record for this year";
-  node.appendChild(empty);
-
-  state.map = { group, width, height, pad: 20, empty };
+  state.map = { group, stateGroup, labels, width, height, pad: 26 };
   updateMapVisibility();
 }
 
-function fitMap(paths) {
+function fitMap(visible) {
   if (!state.map) return;
-  const { group, width, height, pad } = state.map;
+  const { group, stateGroup, labels, width, height, pad } = state.map;
   let minLon = Infinity;
   let maxLon = -Infinity;
   let minLat = Infinity;
   let maxLat = -Infinity;
-  for (const path of paths) {
-    const bounds = path.bounds;
-    if (!bounds) continue;
+
+  const include = (bounds) => {
+    if (!bounds) return;
     minLon = Math.min(minLon, bounds[0]);
     minLat = Math.min(minLat, bounds[1]);
     maxLon = Math.max(maxLon, bounds[2]);
     maxLat = Math.max(maxLat, bounds[3]);
+  };
+
+  for (const path of visible) include(path.bounds);
+
+  const touched = new Set();
+  for (const path of visible) {
+    for (const name of (path.dataset.states || "").split("|")) if (name) touched.add(name);
   }
+
   if (!Number.isFinite(minLon)) {
     group.removeAttribute("transform");
+    stateGroup.removeAttribute("transform");
     return;
   }
 
   const midLat = (minLat + maxLat) / 2;
   const lonScale = Math.max(0.15, Math.cos((midLat * Math.PI) / 180));
-  const spanX = Math.max(0.02, (maxLon - minLon) * lonScale);
-  const spanY = Math.max(0.02, maxLat - minLat);
-  const cap = Math.min(width, height) / 0.2;
+  const spanX = Math.max(1.2, (maxLon - minLon) * lonScale);
+  const spanY = Math.max(0.9, maxLat - minLat);
+  const cap = Math.min(width, height) / 0.12;
   const scale = Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY, cap);
   const centerLon = (minLon + maxLon) / 2;
   const centerLat = (minLat + maxLat) / 2;
   const xScale = lonScale * scale;
   const tx = width / 2 - xScale * centerLon;
   const ty = height / 2 + scale * centerLat;
-  group.setAttribute(
-    "transform",
-    `matrix(${xScale.toFixed(4)} 0 0 ${scale.toFixed(4)} ${tx.toFixed(2)} ${ty.toFixed(2)})`,
-  );
+  const transform = `matrix(${xScale.toFixed(4)} 0 0 ${scale.toFixed(4)} ${tx.toFixed(2)} ${ty.toFixed(2)})`;
+  group.setAttribute("transform", transform);
+  stateGroup.setAttribute("transform", transform);
+
+  clear(labels);
+  for (const path of stateGroup.querySelectorAll("path")) {
+    if (!touched.has(path.dataset.name)) continue;
+    const bounds = path.bounds;
+    if (!bounds) continue;
+    const x = xScale * ((bounds[0] + bounds[2]) / 2) + tx;
+    const y = -scale * ((bounds[1] + bounds[3]) / 2) + ty;
+    if (x < 12 || x > width - 12 || y < 12 || y > height - 12) continue;
+    const label = svg("text", { x, y, "text-anchor": "middle", class: "state-label" });
+    label.textContent = path.dataset.name.toUpperCase();
+    labels.appendChild(label);
+  }
 }
 
 function updateMapVisibility() {
@@ -606,27 +422,37 @@ function updateMapVisibility() {
   for (const item of state.intervals) if (item.to <= year) latestTo = Math.max(latestTo, item.to);
 
   const shown = [];
-  for (const path of dom.map.querySelectorAll("#territories path")) {
+  for (const path of state.map.group.querySelectorAll("path")) {
     const to = Number(path.dataset.to);
     const done = year >= to;
     path.style.display = state.showAll || done ? "" : "none";
-    path.style.opacity = to === latestTo ? "1" : done ? "0.6" : "0.25";
+    path.style.opacity = to === latestTo ? "1" : done ? "0.85" : "0.4";
     if (done) shown.push(path);
   }
 
   if (state.showAll) {
     shown.length = 0;
-    for (const path of dom.map.querySelectorAll("#territories path")) shown.push(path);
+    for (const path of state.map.group.querySelectorAll("path")) shown.push(path);
   }
-  state.map.empty.style.display = shown.length ? "none" : "";
   fitMap(shown);
+
+  const count = shown.length;
+  const states = new Set();
+  for (const path of shown) {
+    for (const name of (path.dataset.states || "").split("|")) if (name) states.add(name);
+  }
+  const list = [...states].sort();
+  dom["map-note"].textContent = state.showAll
+    ? `${count} cession${count === 1 ? "" : "s"} on record.`
+    : `Ceded by ${formatYear(year)}: ${count} cession${count === 1 ? "" : "s"}, falling in `
+      + `${list.length ? list.join(", ") : "no mapped state"}.`;
 }
 
 function startPlay() {
   if (state.playing || !state.selected) return;
   state.playing = true;
   dom.play.textContent = "❚❚";
-  state.timer = window.setInterval(tick, 60);
+  state.timer = window.setInterval(tick, 80);
 }
 
 function stopPlay() {
@@ -640,7 +466,7 @@ function tick() {
   const polity = state.selected;
   if (!polity) return stopPlay();
   const span = polity.to - polity.from;
-  const step = Math.max(1, Math.round(span / 400));
+  const step = Math.max(1, Math.round(span / 300));
   const next = state.year + step > polity.to ? polity.from : state.year + step;
   setYear(next);
 }
@@ -706,11 +532,40 @@ function plateProjection(geometries) {
   ];
 }
 
+function footprintOf(geometries) {
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  for (const geometry of geometries) {
+    eachPoint(geometry, (lon, lat) => {
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    });
+  }
+  return {
+    lon: (minLon + maxLon) / 2,
+    lat: (minLat + maxLat) / 2,
+    spanX: maxLon - minLon,
+    spanY: maxLat - minLat,
+  };
+}
+
+function sameFootprint(first, second) {
+  return (
+    Math.abs(first.lon - second.lon) < 0.6 &&
+    Math.abs(first.lat - second.lat) < 0.6 &&
+    Math.abs(first.spanX - second.spanX) < 1.2 &&
+    Math.abs(first.spanY - second.spanY) < 1.2
+  );
+}
+
 async function renderPlates() {
   const plates = [...document.querySelectorAll(".plate")];
   if (!plates.length) return;
-  const anchor = state.polities.find((polity) => polity.key === "royce-all")
-    || state.polities.find((polity) => polity.kind === "cession");
+  const anchor = state.polities.find((polity) => polity.key === "royce-all");
   if (!anchor) return;
 
   let shard = state.shardCache.get(anchor.shard);
@@ -725,38 +580,44 @@ async function renderPlates() {
 
   const all = state.series.get("royce-all") || [];
   const bucket = shard[all.length ? all[0].g : "royce-cessions"] || [];
+
   const picks = state.polities
     .filter((polity) => polity.key !== "royce-all" && polity.totalArea)
-    .sort((a, b) => b.totalArea - a.totalArea)
-    .slice(0, plates.length);
+    .sort((a, b) => b.totalArea - a.totalArea);
 
-  picks.forEach((polity, index) => {
+  const chosen = [];
+  for (const polity of picks) {
     const geometries = (state.series.get(polity.key) || [])
       .map((item) => bucket[item.i])
       .filter(Boolean);
-    if (!geometries.length) return;
+    if (!geometries.length) continue;
+    const footprint = footprintOf(geometries);
+    if (chosen.some((entry) => sameFootprint(entry.footprint, footprint))) continue;
+    chosen.push({ polity, geometries, footprint });
+    if (chosen.length === plates.length) break;
+  }
 
-    const project = plateProjection(geometries);
+  chosen.forEach((entry, index) => {
+    const project = plateProjection(entry.geometries);
     if (!project) return;
 
     const node = document.createElementNS(SVG_NS, "svg");
     node.setAttribute("viewBox", "0 0 120 90");
     node.setAttribute("aria-hidden", "true");
-    for (const geometry of geometries) {
+    for (const geometry of entry.geometries) {
       const path = document.createElementNS(SVG_NS, "path");
       path.setAttribute("d", geometryPath(geometry, project));
-      path.setAttribute("fill", "currentColor");
-      path.setAttribute("fill-opacity", "0.34");
+      path.setAttribute("fill", "none");
       path.setAttribute("stroke", "currentColor");
-      path.setAttribute("stroke-width", "0.4");
+      path.setAttribute("stroke-width", "0.5");
       node.appendChild(path);
     }
 
     const plate = plates[index];
     plate.textContent = "";
     plate.appendChild(node);
-    plate.setAttribute("aria-label", polity.name);
-    plate.dataset.key = polity.key;
+    plate.setAttribute("aria-label", entry.polity.name);
+    plate.dataset.key = entry.polity.key;
   });
 
   for (const plate of dom.plates.querySelectorAll(".plate")) {
@@ -778,6 +639,10 @@ function wireChrome() {
     event.preventDefault();
     showLanding();
   });
+  dom["back-to-index"].addEventListener("click", (event) => {
+    event.preventDefault();
+    showIndex();
+  });
 }
 
 function wireEvents() {
@@ -786,11 +651,6 @@ function wireEvents() {
   dom.year.addEventListener("input", (event) => {
     stopPlay();
     setYear(Number(event.target.value));
-  });
-  dom["log-scale"].addEventListener("change", (event) => {
-    state.logScale = event.target.checked;
-    renderChart();
-    updateChartCursor();
   });
   dom["show-all"].addEventListener("change", (event) => {
     state.showAll = event.target.checked;
@@ -802,9 +662,8 @@ function wireEvents() {
     if (resizeTimer) window.clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => {
       if (!state.selected) return;
-      renderChart();
       renderMap();
-      updateChartCursor();
+      setYear(state.year);
     }, 150);
   });
 }

@@ -28,10 +28,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/raw
-          key: royce-cessions-2018
+          key: royce-cessions-2018-states-50m
 
       - name: Fetch US cessions
         run: python pipeline/fetch_tribal_cessions.py
+
+      - name: Fetch US state outlines
+        run: python pipeline/fetch_us_states.py
 
       - name: Build site dataset
         run: python pipeline/build_site_data.py --report

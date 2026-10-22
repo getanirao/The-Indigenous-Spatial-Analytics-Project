@@ -47,76 +47,61 @@
   </header>
 
   <main class="layout">
-    <aside class="sidebar">
-      <label class="search">
-        <span class="search-label">Find a nation</span>
-        <input id="search" type="search" placeholder="Cherokee, Comanche, Choctaw" autocomplete="off">
-      </label>
-      <nav class="alpha" id="alpha" aria-label="Filter by initial letter"></nav>
-      <p class="hint" id="list-meta">Loading dataset…</p>
+    <section class="index-view" id="index-view">
+      <div class="index-head">
+        <label class="search">
+          <span class="search-label">Find a nation</span>
+          <input id="search" type="search" placeholder="Cherokee, Comanche, Choctaw" autocomplete="off">
+        </label>
+        <nav class="alpha" id="alpha" aria-label="Filter by initial letter"></nav>
+        <p class="hint" id="list-meta">Loading dataset…</p>
+      </div>
       <ul id="polity-list" class="polity-list"></ul>
-    </aside>
+    </section>
 
-    <section class="stage">
-      <p id="status" class="status">Loading dataset…</p>
+    <section class="detail-view" id="detail-view" hidden>
+      <a class="back-link" id="back-to-index" href="#">Index</a>
 
-      <div class="intro" id="stage-intro">
-        <h2>Land ceded,<br>nation by nation.</h2>
-        <p class="intro-lede">
-          Each figure here is a cession: land formally given up by treaty, counted cumulatively
-          to a date. A cession signed by several nations is credited in full to each of them, so
-          these totals overlap and never add up to one national number.
-        </p>
-        <p class="hint">Choose a nation from the index, or begin with one of these.</p>
-        <ul class="intro-picks" id="intro-picks"></ul>
+      <header class="detail-head">
+        <h2 id="polity-name"></h2>
+        <p id="polity-meta" class="muted"></p>
+      </header>
+
+      <div class="readout">
+        <div class="stat">
+          <span class="stat-label">Cumulative ceded</span>
+          <span id="stat-area" class="stat-value">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Cessions to date</span>
+          <span id="stat-share" class="stat-value">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Latest cession</span>
+          <span id="stat-window" class="stat-value">—</span>
+        </div>
       </div>
 
-      <div id="detail" hidden>
-        <header class="detail-head">
-          <h2 id="polity-name"></h2>
-          <p id="polity-meta" class="muted"></p>
-        </header>
+      <div class="map-wrap">
+        <svg id="map" role="img" aria-label="Ceded land of the selected nation in the current year"></svg>
+      </div>
+      <p class="caption" id="map-note"></p>
 
-        <div class="readout">
-          <div class="stat">
-            <span id="stat-area-label" class="stat-label">Cumulative ceded</span>
-            <span id="stat-area" class="stat-value">—</span>
-          </div>
-          <div class="stat">
-            <span id="stat-share-label" class="stat-label">Cessions to date</span>
-            <span id="stat-share" class="stat-value">—</span>
-          </div>
-          <div class="stat">
-            <span id="stat-window-label" class="stat-label">Latest cession</span>
-            <span id="stat-window" class="stat-value">—</span>
-          </div>
-        </div>
+      <div class="transport">
+        <button id="play" type="button" class="play" aria-label="Play or pause the timeline">▶</button>
+        <input id="year" type="range" min="0" max="1" step="1" aria-label="Year">
+        <output id="year-label" class="year-label"></output>
+        <label class="toggle"><input id="show-all" type="checkbox"> Show every cession</label>
+      </div>
 
-        <div class="chart-wrap">
-          <svg id="chart" role="img" aria-labelledby="polity-name" aria-describedby="chart-caption"></svg>
-          <div id="chart-tooltip" class="tooltip" hidden></div>
-          <p id="chart-caption" class="caption">
-            Cessions are plotted cumulatively, as a step function, because they are recorded at
-            uneven intervals. A flat stretch means no land was ceded in that period, not that a
-            nation was absent.
-          </p>
-        </div>
-
-        <div class="map-wrap">
-          <svg id="map" role="img" aria-label="Ceded land of the selected nation in the current year"></svg>
-        </div>
-        <p class="caption">
-          Equirectangular, framed to the cessions shown at the current year. Faint areas are
-          earlier cessions by the same nation.
-        </p>
-
-        <div class="transport">
-          <button id="play" type="button" class="play" aria-label="Play or pause the timeline">▶</button>
-          <input id="year" type="range" min="0" max="1" step="1" aria-label="Year">
-          <output id="year-label" class="year-label"></output>
-          <label class="toggle"><input id="log-scale" type="checkbox"> Log scale</label>
-          <label class="toggle"><input id="show-all" type="checkbox"> Show all cessions</label>
-        </div>
+      <div class="cessions">
+        <h3 class="cessions-title">Cessions on record</h3>
+        <table class="cession-table">
+          <thead>
+            <tr><th scope="col">Year</th><th scope="col">Land ceded</th><th scope="col">Now part of</th></tr>
+          </thead>
+          <tbody id="cession-rows"></tbody>
+        </table>
       </div>
     </section>
   </main>

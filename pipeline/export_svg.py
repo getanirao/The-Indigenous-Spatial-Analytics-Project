@@ -30,6 +30,7 @@ MUTED = "#6b655b"
 CESSION = "#8a3324"
 GRID = "#e6e1d6"
 AXIS = "#cbc5b8"
+STATE_LINE = "#b9b2a3"
 
 
 def log(message: str) -> None:
@@ -212,23 +213,32 @@ def render_map(
     intervals: list[dict],
     geometries: list,
     year: int,
+    states: list[dict],
 ) -> str:
     header = 56
-    footer = 40
+    footer = 64
     pad = 26
     content_h = 500
     height = header + content_h + footer
     title = f"Land ceded by {polity['name']} by {format_year(year)}"
     active = [item for item in intervals if item["to"] <= year]
+    touched: set[str] = set()
+    for item in active:
+        touched.update(item.get("s") or [])
+    states_touched = sorted(touched)
     description = (
         f"All land recorded as ceded by {polity['name']} up to {format_year(year)}, "
-        f"equirectangular projection framed to the recorded polygons. Source: Royce, C. C., "
-        f"Indian Land Cessions in the United States (1899), digitised by the U.S. Forest "
-        f"Service and Claudio Saunt (public domain). Figure licensed {meta['license']}. "
+        f"equirectangular projection framed to the recorded polygons, with modern state "
+        f"boundaries for context. The ceded land now lies in: "
+        f"{', '.join(states_touched) if states_touched else 'no mapped state'}. "
+        f"Source: Royce, C. C., Indian Land Cessions in the United States (1899), digitised "
+        f"by the U.S. Forest Service and Claudio Saunt (public domain). State outlines: "
+        f"Natural Earth (public domain). Figure licensed {meta['license']}. "
         f"Cession boundaries are one interpretation of the 1899 schedule, not surveyed borders."
     )
 
     layers: list[tuple[list, str]] = []
+    state_layers: list[tuple[list, str]] = []
     min_lon = min_lat = math.inf
     max_lon = max_lat = -math.inf
     for item in intervals:
@@ -248,6 +258,20 @@ def render_map(
                     min_lat = min(min_lat, lat)
                     max_lat = max(max_lat, lat)
                 layers.append((ring, fill))
+
+    for entry in states:
+        if entry.get("name") not in touched:
+            continue
+        geometry = entry["geometry"]
+        polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+        for polygon in polygons:
+            for ring in polygon:
+                for lon, lat in ring:
+                    min_lon = min(min_lon, lon)
+                    max_lon = max(max_lon, lon)
+                    min_lat = min(min_lat, lat)
+                    max_lat = max(max_lat, lat)
+                state_layers.append((ring, STATE_LINE))
 
     if not math.isfinite(min_lon):
         min_lon, max_lon, min_lat, max_lat = -170.0, -20.0, 15.0, 72.0
@@ -300,11 +324,17 @@ def render_map(
         )
         longitude += step
 
+    for ring, color in state_layers:
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (project(lon, lat) for lon, lat in ring))
+        body.append(
+            f'<polygon points="{points}" fill="none" stroke="{color}" stroke-width="0.7"/>'
+        )
+
     for ring, fill in layers:
         points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (project(lon, lat) for lon, lat in ring))
         body.append(
-            f'<polygon points="{points}" fill="{fill}" fill-opacity="0.45" stroke="{fill}" '
-            f'stroke-width="0.9"/>'
+            f'<polygon points="{points}" fill="#fbfaf6" fill-opacity="0.9" stroke="{INK}" '
+            f'stroke-width="1.1"/>'
         )
 
     body.append("</g>")
@@ -312,6 +342,13 @@ def render_map(
         f'<rect x="0.5" y="{header + 0.5}" width="{MAP_WIDTH - 1}" height="{content_h - 1}" '
         f'fill="none" stroke="{AXIS}"/>'
     )
+
+    if states_touched:
+        names = ", ".join(states_touched)
+        body.append(
+            f'<text x="16" y="{height - 38}" font-family="sans-serif" font-size="13" fill="{MUTED}">'
+            f"Ceded land now lies in: {escape(names)}</text>"
+        )
 
     if not active:
         body.append(
@@ -403,8 +440,11 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_map and peak is not None:
             year = args.year if args.year is not None else polity["to"]
             geometries = shard_cache[shard].get(intervals[0].get("g", key) if intervals else key) or []
+            states = shard_cache[shard].get("us-states") or []
             map_path = out_dir / f"{base}-ceded-by-{year}.svg"
-            map_path.write_text(render_map(meta, polity, intervals, geometries, year), encoding="utf-8")
+            map_path.write_text(
+                render_map(meta, polity, intervals, geometries, year, states), encoding="utf-8"
+            )
             log(f"wrote {map_path}")
             written += 1
 
