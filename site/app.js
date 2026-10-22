@@ -51,8 +51,7 @@ function cacheDom() {
   const ids = [
     "landing", "app", "enter", "enter-link", "back-link", "alpha", "plates",
     "search", "list-meta", "polity-list", "index-view", "detail-view", "back-to-index",
-    "polity-name", "polity-meta", "stat-area", "stat-share", "stat-window",
-    "map", "map-note", "cession-rows", "play", "year", "year-label", "show-all",
+    "polity-name", "map", "cession-rows", "play", "year", "year-label", "show-all",
     "footer-credit",
   ];
   for (const id of ids) dom[id] = document.getElementById(id);
@@ -183,7 +182,7 @@ async function selectPolity(key) {
   dom["index-view"].hidden = true;
   dom["detail-view"].hidden = false;
   dom["polity-name"].textContent = polity.name;
-  dom["polity-meta"].textContent = describePolity(polity);
+  document.title = `${polity.name} — Native Land Cessions`;
 
   dom.year.min = String(polity.from);
   dom.year.max = String(polity.to);
@@ -205,6 +204,7 @@ function showIndex() {
   dom["detail-view"].hidden = true;
   dom["index-view"].hidden = false;
   state.selected = null;
+  document.title = "Native Land Cessions";
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 
@@ -214,38 +214,16 @@ function focusYear(polity) {
   return known.reduce((best, item) => (item.to > best.to ? item : best), known[0]).to;
 }
 
-function describePolity(polity) {
-  const bits = [
-    `${state.intervals.length} cession${state.intervals.length === 1 ? "" : "s"} on record`,
-  ];
-  if (polity.totalArea) bits.push(`${formatArea(polity.totalArea)} ceded in total`);
-  bits.push("Royce 1899, digitised by the U.S. Forest Service");
-  return bits.join(" · ");
-}
-
-function currentArea(year) {
-  let total = 0.0;
-  let count = 0;
-  let latest = null;
-  for (const item of state.intervals) {
-    if (item.area === null || item.to > year) continue;
-    total += item.area;
-    count += 1;
-    if (!latest || item.to > latest.to) latest = item;
-  }
-  return { area: count ? total : null, count, latest };
-}
-
 function setYear(year) {
   state.year = year;
   dom.year.value = String(year);
   dom["year-label"].textContent = formatYear(year);
-
-  const { area, count, latest } = currentArea(year);
-  dom["stat-area"].textContent = formatArea(area);
-  dom["stat-share"].textContent = count ? count.toLocaleString() : "—";
-  dom["stat-window"].textContent = latest ? formatYear(latest.to) : "none yet";
-
+  if (state.selected) {
+    dom.map.setAttribute(
+      "aria-label",
+      `Ceded land of ${state.selected.name} by ${formatYear(year)}`,
+    );
+  }
   updateMapVisibility();
 }
 
@@ -502,17 +480,6 @@ function updateMapVisibility() {
     for (const path of state.map.group.querySelectorAll("path")) shown.push(path);
   }
   fitMap(shown);
-
-  const count = shown.length;
-  const states = new Set();
-  for (const path of shown) {
-    for (const name of (path.dataset.states || "").split("|")) if (name) states.add(name);
-  }
-  const list = [...states].sort();
-  dom["map-note"].textContent = state.showAll
-    ? `${count} cession${count === 1 ? "" : "s"} on record.`
-    : `Ceded by ${formatYear(year)}: ${count} cession${count === 1 ? "" : "s"}, falling in `
-      + `${list.length ? list.join(", ") : "no mapped state"}.`;
 }
 
 function startPlay() {
@@ -546,6 +513,7 @@ function openApp() {
 function showLanding() {
   dom.app.hidden = true;
   dom.landing.hidden = false;
+  document.title = "Native Land Cessions";
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 

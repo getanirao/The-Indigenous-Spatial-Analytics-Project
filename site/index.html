@@ -40,6 +40,7 @@
       <p class="tagline">Native nations of the United States and the land they ceded · 1784 – 1893</p>
     </div>
     <nav class="site-nav">
+      <a href="#" id="back-to-index">atlas</a>
       <a href="#" id="back-link">cover</a>
       <a href="https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project/blob/main/ATTRIBUTION.md">sources</a>
       <a href="https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project">repository</a>
@@ -60,32 +61,10 @@
     </section>
 
     <section class="detail-view" id="detail-view" hidden>
-      <a class="back-link" id="back-to-index" href="#">Index</a>
-
-      <header class="detail-head">
-        <h2 id="polity-name"></h2>
-        <p id="polity-meta" class="muted"></p>
-      </header>
-
-      <div class="readout">
-        <div class="stat">
-          <span class="stat-label">Cumulative ceded</span>
-          <span id="stat-area" class="stat-value">—</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Cessions to date</span>
-          <span id="stat-share" class="stat-value">—</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Latest cession</span>
-          <span id="stat-window" class="stat-value">—</span>
-        </div>
-      </div>
-
       <div class="map-wrap">
+        <h2 class="map-title" id="polity-name"></h2>
         <svg id="map" role="img" aria-label="Ceded land of the selected nation in the current year"></svg>
       </div>
-      <p class="caption" id="map-note"></p>
 
       <div class="transport">
         <button id="play" type="button" class="play" aria-label="Play or pause the timeline">▶</button>
