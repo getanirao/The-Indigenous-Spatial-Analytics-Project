@@ -4,13 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      min_year:
-        description: Window start year (contact cutoff)
-        default: "1492"
-      max_year:
-        description: Window end year, blank for open-ended
-        default: ""
 
 permissions:
   contents: read
@@ -35,23 +28,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/raw
-          key: cliopatria-v0.2.0
-
-      - name: Fetch Cliopatria
-        run: python pipeline/fetch_cliopatria.py
+          key: royce-cessions-2018
 
       - name: Fetch US cessions
-        continue-on-error: true
         run: python pipeline/fetch_tribal_cessions.py
 
       - name: Build site dataset
-        env:
-          MIN_YEAR: ${{ inputs.min_year || '1492' }}
-          MAX_YEAR: ${{ inputs.max_year }}
-        run: |
-          args=(--min-year "$MIN_YEAR" --report)
-          if [ -n "$MAX_YEAR" ]; then args+=(--max-year "$MAX_YEAR"); fi
-          python pipeline/build_site_data.py "${args[@]}"
+        run: python pipeline/build_site_data.py --report
 
       - name: Export Commons-ready SVGs
         continue-on-error: true

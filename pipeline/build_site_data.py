@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Turn data/raw/cliopatria.geojson into the static dataset consumed by site/.
+"""Build the static dataset consumed by site/ from the Royce/USFS cession layer.
 
 Outputs (all under --out, default site/data):
 
-    polities.json      index: key, name, type, year span, peak area, shard id, meta block
-    series.json        {key: [{from, to, area, type, i}]}
+    polities.json      index: key, name, year span, total ceded, shard id, meta block
+    series.json        {key: [{from, to, area, type, i, g}]}
     geom/<shard>.json  {key: [<GeoJSON geometry>, ...]}, addressed by the `i` field above
+
+Every cession polygon is stored once under CESSION_GEOM_KEY and referenced by each nation
+that signed it, so joint cessions are credited in full to each signatory and per-nation
+totals do not partition the national total.
 
 Geometry is simplified with a pure-python Douglas-Peucker pass, so this needs no shapely,
 pyproj, GDAL, or geopandas. Standard library only.
@@ -25,52 +29,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 EARTH_RADIUS_KM = 6371.0088
-WORLD_LAND_KM2 = 148_940_000
 
-DEFAULT_TOLERANCE = 0.08  # degrees; ~9 km at the equator
 DEFAULT_CESSION_TOLERANCE = 0.01  # cessions are parcel-sized; 0.08 erases many of them
 DEFAULT_PRECISION = 3
 
-# This project looks at land after European contact, so the default window starts at 1492.
-# Contact dates differ by region (Australia 1770, Aotearoa 1769, and so on); narrow the window
-# per region rather than treating 1492 as universal. Records that straddle the cutoff are
-# clamped, not dropped, so nothing that was still standing in 1492 disappears.
-DEFAULT_MIN_YEAR = 1492
-DEFAULT_MAX_YEAR: int | None = None
-
 CESSION_GEOM_KEY = "royce-cessions"
-
-FIELD_ALIASES = {
-    "name": ("name", "polity", "title"),
-    "from": ("fromyear", "from", "startyear", "start"),
-    "to": ("toyear", "to", "endyear", "end"),
-    "area": ("area", "areakm2", "area_km2", "surface"),
-    "type": ("type", "politytype", "entitytype"),
-    "wikipedia": ("wikipedia", "wikipediaurl", "wiki"),
-    "wikidata": ("wikidata", "wikidataid", "qid"),
-    "seshat": ("seshatid", "seshat", "seshatpolityid"),
-    "memberof": ("memberof", "member"),
-}
+AGGREGATE_KEY = "royce-all"
+AGGREGATE_NAME = "United States — all recorded cessions"
 
 
 def log(message: str) -> None:
     print(f"[build] {message}", flush=True)
-
-
-def normalize_key(text: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(text).lower())
-
-
-def property_map(props: dict) -> dict:
-    return {normalize_key(k): v for k, v in props.items()}
-
-
-def pick(props: dict, field: str, default=None):
-    for alias in FIELD_ALIASES[field]:
-        value = props.get(normalize_key(alias))
-        if value not in (None, ""):
-            return value
-    return default
 
 
 def slugify(text: str) -> str:
@@ -193,40 +162,10 @@ def shard_for(key: str) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:2]
 
 
-def load_features(path: Path) -> list[dict]:
-    log(f"reading {path} ({path.stat().st_size / 1e6:,.1f} MB)")
-    with path.open("r", encoding="utf-8") as fh:
-        payload = json.load(fh)
-    if payload.get("type") == "FeatureCollection":
-        return payload.get("features", [])
-    if payload.get("type") == "Feature":
-        return [payload]
-    raise SystemExit(f"Unsupported GeoJSON root type: {payload.get('type')!r}")
-
-
-def resolve_keys(records: list[dict]) -> dict[str, str]:
-    """Pick one stable key per source name so a polity's records do not fragment.
-
-    Identifier-bearing records win; when a name appears with and without an identifier,
-    the whole name is keyed by the identifier that most of its records carry.
-    """
-    per_name: dict[str, Counter] = defaultdict(Counter)
-    for record in records:
-        if not record.get("resolve", True):
-            continue
-        per_name[record["name"]][record["key"]] += 1
-    resolved: dict[str, str] = {}
-    for name, counter in per_name.items():
-        resolved[name] = counter.most_common(1)[0][0]
-    return resolved
-
-
 def load_cessions(
     path: Path,
     tolerance: float,
     precision: int,
-    min_year: int,
-    max_year: int | None,
 ) -> tuple[list[dict], dict[str, list], int]:
     """Turn joined Royce/USFS cession polygons into records plus shared geometry.
 
@@ -246,8 +185,6 @@ def load_cessions(
         if year is None:
             skipped += 1
             continue
-        if year < min_year or (max_year is not None and year > max_year):
-            continue
         geometry = feature.get("geometry")
         simplified = simplify_geometry(geometry, tolerance, precision)
         area = geometry_area_km2(geometry)
@@ -266,121 +203,67 @@ def load_cessions(
             "source": "royce",
             "i": index,
             "g": CESSION_GEOM_KEY,
-            "resolve": False,
             "wikipedia": None,
             "wikidata": None,
             "seshat": None,
             "memberof": None,
-            "geometry": None,
         }
         for tribe in properties.get("tribes") or []:
             tribe = str(tribe).strip()
             if tribe:
                 records.append({**common, "name": tribe, "key": f"royce-{slugify(tribe)}"})
-        records.append(
-            {
-                **common,
-                "name": "United States — all recorded cessions",
-                "key": "royce-all",
-            }
-        )
+        records.append({**common, "name": AGGREGATE_NAME, "key": AGGREGATE_KEY})
 
     return records, {CESSION_GEOM_KEY: seed}, skipped
 
 
-def build(
-    records: list[dict],
-    seed_geometry: dict[str, list],
-    tolerance: float,
-    precision: int,
-    report: bool,
-) -> dict:
-    name_for_key = resolve_keys(records)
-
+def build(records: list[dict], seed_geometry: dict[str, list], report: bool) -> dict:
     series: dict[str, list[dict]] = defaultdict(list)
     geometry: dict[str, list] = {key: list(value) for key, value in seed_geometry.items()}
     stats: dict[str, dict] = {}
-    missing_area = 0
 
     for record in records:
-        key = name_for_key[record["name"]] if record.get("resolve", True) else record["key"]
-        geom_key = record.get("g") or key
-        index = record.get("i")
-        if index is None:
-            geom = simplify_geometry(record["geometry"], tolerance, precision)
-            if geom is not None:
-                geometry.setdefault(geom_key, [])
-                index = len(geometry[geom_key])
-                geometry[geom_key].append(geom)
-
-        area = record["area"]
-        if area is None:
-            area = geometry_area_km2(record.get("geometry"))
-        if area is None and index is not None:
-            area = geometry_area_km2(geometry[geom_key][index])
-        if area is None or area <= 0:
-            missing_area += 1
-            area = None
-
+        key = record["key"]
         series[key].append(
             {
                 "from": record["from"],
                 "to": record["to"],
-                "area": round(area, 1) if area is not None else None,
+                "area": round(record["area"], 1) if record["area"] is not None else None,
                 "type": record["type"],
-                "i": index,
-                "g": geom_key,
+                "i": record["i"],
+                "g": record["g"],
             }
         )
-
-        entry = stats.setdefault(
-            key,
-            {
-                "name": record["name"],
-                "type": record["type"],
-                "kind": record.get("kind", "extent"),
-                "source": record.get("source", "cliopatria"),
-                "wikipedia": record["wikipedia"],
-                "wikidata": record["wikidata"],
-                "seshat": record["seshat"],
-                "memberof": record["memberof"],
-                "names": Counter(),
-                "types": Counter(),
-            },
-        )
+        entry = stats.setdefault(key, {"names": Counter()})
         entry["names"][record["name"]] += 1
-        entry["types"][record["type"] or "UNKNOWN"] += 1
-        for field in ("wikipedia", "wikidata", "seshat", "memberof"):
-            if entry[field] is None and record[field] is not None:
-                entry[field] = record[field]
 
     polities = []
     for key, intervals in series.items():
         intervals.sort(key=lambda item: (item["from"], item["to"]))
-        entry = stats[key]
         known = [i["area"] for i in intervals if i["area"] is not None]
         geom_key = Counter(item["g"] for item in intervals).most_common(1)[0][0]
-        polity = {
-            "key": key,
-            "name": entry["names"].most_common(1)[0][0],
-            "type": entry["types"].most_common(1)[0][0],
-            "kind": entry["kind"],
-            "source": entry["source"],
-            "from": min(i["from"] for i in intervals),
-            "to": max(i["to"] for i in intervals),
-            "peakArea": max(known) if known else None,
-            "totalArea": round(sum(known), 1) if known else None,
-            "records": len(intervals),
-            "shard": shard_for(geom_key),
-            "wikipedia": entry["wikipedia"],
-            "wikidata": entry["wikidata"],
-            "seshatId": entry["seshat"],
-            "memberOf": entry["memberof"],
-        }
-        polities.append(polity)
+        polities.append(
+            {
+                "key": key,
+                "name": stats[key]["names"].most_common(1)[0][0],
+                "type": "CESSION",
+                "kind": "cession",
+                "source": "royce",
+                "from": min(i["from"] for i in intervals),
+                "to": max(i["to"] for i in intervals),
+                "totalArea": round(sum(known), 1) if known else None,
+                "peakArea": max(known) if known else None,
+                "records": len(intervals),
+                "shard": shard_for(geom_key),
+                "wikipedia": None,
+                "wikidata": None,
+                "seshatId": None,
+                "memberOf": None,
+            }
+        )
 
     def sort_key(item: dict) -> tuple:
-        if item["key"] == "royce-all":
+        if item["key"] == AGGREGATE_KEY:
             return ("", "")
         return (item["name"].casefold(), item["key"])
 
@@ -392,23 +275,15 @@ def build(
             shards[shard_for(key)][key] = geoms
 
     if report:
-        with_area = sum(1 for p in polities if p["peakArea"])
-        log(f"records={len(records)} polities={len(polities)} shards={len(shards)}")
-        log(f"polities without usable area: {missing_area} records")
-        log(f"polities with a peak area: {with_area}/{len(polities)}")
-        for kind in ("extent", "cession"):
-            subset = [p for p in polities if p["kind"] == kind]
-            log(f"  {kind}: {len(subset)} entities")
-        top = [p for p in polities if p["kind"] == "extent"][:3] + [
-            p for p in polities if p["kind"] == "cession"
-        ][:3]
-        for polity in top:
+        log(f"records={len(records)} nations={len(polities)} shards={len(shards)}")
+        log(f"cession polygons: {len(geometry.get(CESSION_GEOM_KEY, []))}")
+        for polity in polities[:5]:
             log(
-                f"  {polity['peakArea'] or 0:>12,.0f} km²  {polity['name']} "
-                f"({polity['from']}..{polity['to']}) [{polity['kind']}]"
+                f"  {polity['totalArea'] or 0:>12,.0f} km²  {polity['name']} "
+                f"({polity['from']}..{polity['to']}, {polity['records']} records)"
             )
 
-    return {"polities": polities, "series": series, "shards": shards, "missing_area": missing_area}
+    return {"polities": polities, "series": series, "shards": shards}
 
 
 def write_outputs(out_dir: Path, built: dict, meta: dict, pretty: bool) -> None:
@@ -432,17 +307,9 @@ def write_outputs(out_dir: Path, built: dict, meta: dict, pretty: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", default="data/raw/cliopatria.geojson")
-    parser.add_argument("--out", default="site/data")
-    parser.add_argument("--min-year", type=int, default=DEFAULT_MIN_YEAR,
-                        help="window start; --min-year -4000 restores the full deep-time series")
-    parser.add_argument("--max-year", type=int, default=DEFAULT_MAX_YEAR,
-                        help="window end (default: no limit)")
     parser.add_argument("--cessions", default="data/raw/tribal_cessions.geojson",
-                        help="joined Royce/USFS cession GeoJSON; skipped if absent")
-    parser.add_argument("--no-cessions", action="store_true", help="ignore the cession layer")
-    parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE,
-                        help="simplification tolerance in degrees (0 disables)")
+                        help="joined Royce/USFS cession GeoJSON")
+    parser.add_argument("--out", default="site/data")
     parser.add_argument("--cession-tolerance", type=float, default=DEFAULT_CESSION_TOLERANCE,
                         help="tolerance for cession polygons, which are much smaller")
     parser.add_argument("--precision", type=int, default=DEFAULT_PRECISION,
@@ -451,177 +318,65 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", action="store_true", help="print build statistics")
     args = parser.parse_args(argv)
 
-    source = Path(args.input)
-    if not source.exists():
-        raise SystemExit(
-            f"{source} not found. Run pipeline/fetch_cliopatria.py first, or pass --input."
-        )
-
-    raw_records = []
-    skipped = 0
-    windowed_out = 0
-    for feature in load_features(source):
-        props = property_map(feature.get("properties") or {})
-        name = pick(props, "name")
-        start = to_int(pick(props, "from"))
-        end = to_int(pick(props, "to"))
-        if not name or start is None or end is None:
-            skipped += 1
-            continue
-        if end < start:
-            start, end = end, start
-
-        if args.max_year is not None and start > args.max_year:
-            windowed_out += 1
-            continue
-        if end < args.min_year:
-            windowed_out += 1
-            continue
-        start = max(start, args.min_year)
-        if args.max_year is not None:
-            end = min(end, args.max_year)
-        if end < start:
-            windowed_out += 1
-            continue
-
-        wikidata = pick(props, "wikidata")
-        seshat = pick(props, "seshat")
-        identifier = None
-        if wikidata:
-            identifier = slugify(wikidata)
-        elif seshat:
-            identifier = slugify(f"seshat-{seshat}")
-        raw_records.append(
-            {
-                "name": str(name).strip(),
-                "from": start,
-                "to": end,
-                "area": _as_float(pick(props, "area")),
-                "type": pick(props, "type", "POLITY"),
-                "wikipedia": pick(props, "wikipedia"),
-                "wikidata": wikidata,
-                "seshat": seshat,
-                "memberof": pick(props, "memberof"),
-                "geometry": feature.get("geometry"),
-                "key": identifier or slugify(name),
-            }
-        )
-    if skipped:
-        log(f"skipped {skipped} features without a name or year range")
-    if windowed_out:
-        log(f"excluded {windowed_out} features outside the {args.min_year}..{args.max_year} window")
-
-    cession_records: list[dict] = []
-    cession_seed: dict[str, list] = {}
     cessions_path = Path(args.cessions)
-    if not args.no_cessions and cessions_path.exists():
-        cession_records, cession_seed, cession_skipped = load_cessions(
-            cessions_path, args.cession_tolerance, args.precision, args.min_year, args.max_year
-        )
-        log(f"cessions: {len(cession_seed.get(CESSION_GEOM_KEY, []))} polygons, "
-            f"{len(cession_records)} nation-cession links")
-        if cession_skipped:
-            log(f"cessions: skipped {cession_skipped} polygons without a date or area")
-        raw_records.extend(cession_records)
-    elif not args.no_cessions:
-        log(f"no cession layer at {cessions_path} (run pipeline/fetch_tribal_cessions.py)")
-
-    if not raw_records:
+    if not cessions_path.exists():
         raise SystemExit(
-            f"No features fall inside the {args.min_year}..{args.max_year} window. "
-            f"Try a wider window, e.g. --min-year -4000."
+            f"{cessions_path} not found. Run pipeline/fetch_tribal_cessions.py first."
         )
 
-    built = build(raw_records, cession_seed, args.tolerance, args.precision, args.report)
-
-    sources = [
-        {
-            "name": "Cliopatria (Seshat: Global History Databank)",
-            "doi": "10.5281/zenodo.20274630",
-            "record": "20274630",
-            "version": "v0.2.0",
-            "license": "CC BY 4.0",
-            "kind": "extent",
-        },
-    ]
-    credit_extent = (
-        "Data: Bennett, J., Mutch, E., & Chalstrey, E. (2024). Cliopatria — A geospatial "
-        "database of world-wide political entities from 3400BCE to 2024CE. Zenodo. "
-        "https://doi.org/10.5281/zenodo.20274630 (CC BY 4.0). "
+    records, seed, skipped = load_cessions(
+        cessions_path, args.cession_tolerance, args.precision
     )
-    figure_credit = "Visualization: The Indigenous Spatial Analytics Project (CC BY-SA 4.0)."
-    credit_cession = (
-        "Data: Royce, C. C. (1899). Indian Land Cessions in the United States, digitised by the "
-        "U.S. Forest Service and Claudio Saunt (public domain, U.S. Government work). "
-    )
-    if cession_records:
-        sources.append(
-            {
-                "name": "Tribal Ceded Lands (U.S. Forest Service)",
-                "description": (
-                    "Royce, C. C. Indian Land Cessions in the United States (1899), digitised "
-                    "by the U.S. Forest Service with Claudio Saunt."
-                ),
-                "url": (
-                    "https://apps.fs.usda.gov/arcx/rest/services/EDW/"
-                    "EDW_TribalCessionLands_01/MapServer"
-                ),
-                "license": "Public domain (U.S. Government work)",
-                "kind": "cession",
-            }
-        )
-        attribution = credit_extent + credit_cession + figure_credit
-    else:
-        attribution = credit_extent + figure_credit
+    log(f"cessions: {len(seed.get(CESSION_GEOM_KEY, []))} polygons, "
+        f"{len(records)} nation-cession links")
+    if skipped:
+        log(f"cessions: skipped {skipped} polygons without a date or area")
+    if not records:
+        raise SystemExit(f"No usable cession features in {cessions_path}.")
 
-    years = [r["from"] for r in raw_records] + [r["to"] for r in raw_records]
+    built = build(records, seed, args.report)
+
+    source = {
+        "name": "Tribal Ceded Lands (U.S. Forest Service)",
+        "description": (
+            "Royce, C. C. Indian Land Cessions in the United States (1899), digitised "
+            "by the U.S. Forest Service with Claudio Saunt."
+        ),
+        "url": (
+            "https://apps.fs.usda.gov/arcx/rest/services/EDW/"
+            "EDW_TribalCessionLands_01/MapServer"
+        ),
+        "license": "Public domain (U.S. Government work)",
+        "kind": "cession",
+    }
+    attribution = (
+        "Data: Royce, C. C. (1899). Indian Land Cessions in the United States, digitised by "
+        "the U.S. Forest Service and Claudio Saunt (public domain, U.S. Government work). "
+        "Visualization: The Indigenous Spatial Analytics Project (CC BY-SA 4.0)."
+    )
+
+    years = [r["from"] for r in records] + [r["to"] for r in records]
     meta = {
-        "title": "Nations' Land Over Time",
+        "title": "Native Land Cessions",
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "window": {
-            "from": args.min_year,
-            "to": args.max_year,
-            "note": (
-                "Records overlapping this window are kept and clamped to it, so polities that "
-                "predate European contact still appear for the years they were still standing. "
-                "1492 is a European framing: contact dates differ by region."
-            ),
-        },
-        "source": sources[0],
-        "sources": sources,
+        "source": source,
+        "sources": [source],
         "attribution": attribution,
-        "attributions": {
-            "extent": credit_extent + figure_credit,
-            "cession": (credit_cession + figure_credit) if cession_records else None,
-        },
         "license": "CC BY-SA 4.0",
-        "worldLandKm2": WORLD_LAND_KM2,
         "yearRange": [min(years), max(years)] if years else [0, 0],
         "counts": {
-            "records": len(raw_records),
+            "records": len(records),
             "polities": len(built["polities"]),
             "shards": len(built["shards"]),
-            "extents": sum(1 for p in built["polities"] if p["kind"] == "extent"),
-            "cessions": sum(1 for p in built["polities"] if p["kind"] == "cession"),
-            "cessionRecords": len(cession_records),
+            "polygons": len(seed.get(CESSION_GEOM_KEY, [])),
         },
         "simplification": {
-            "toleranceDegrees": args.tolerance,
+            "toleranceDegrees": args.cession_tolerance,
             "precision": args.precision,
         },
     }
     write_outputs(Path(args.out), built, meta, args.pretty)
     return 0
-
-
-def _as_float(value) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
 
 
 if __name__ == "__main__":

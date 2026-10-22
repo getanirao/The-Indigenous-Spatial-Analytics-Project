@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nations' Land Over Time</title>
-<meta name="description" content="How much land each nation controlled after European contact, built from the open Cliopatria and Royce datasets.">
+<title>Native Land Cessions</title>
+<meta name="description" content="Land ceded by Native nations of the United States, nation by nation, from the Royce schedule of Indian land cessions (1784-1893).">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,19 +25,19 @@
   </div>
 
   <div class="landing-center">
-    <h1>Nations’ land<br><em>over time</em></h1>
-    <p class="landing-sub">Sovereignty and dispossession after European contact · 1492 – 2024</p>
+    <h1>Native land<br><em>ceded</em></h1>
+    <p class="landing-sub">Every nation in the Royce schedule of Indian land cessions · 1784 – 1893</p>
     <button type="button" class="enter" id="enter">Explore</button>
   </div>
 
-  <p class="landing-foot">Cliopatria · Royce, <cite>Indian Land Cessions</cite> (1899) · CC BY-SA 4.0</p>
+  <p class="landing-foot">Royce, <cite>Indian Land Cessions in the United States</cite> (1899), digitised by the U.S. Forest Service · CC BY-SA 4.0</p>
 </section>
 
 <div id="app" hidden>
   <header class="site-header">
     <div class="brand">
-      <h1>Nations’ Land Over Time</h1>
-      <p class="tagline">Sovereignty and land after European contact · 1492 – 2024</p>
+      <h1>Native Land Cessions</h1>
+      <p class="tagline">Native nations of the United States and the land they ceded · 1784 – 1893</p>
     </div>
     <nav class="site-nav">
       <a href="#" id="back-link">cover</a>
@@ -48,14 +48,9 @@
 
   <main class="layout">
     <aside class="sidebar">
-      <div class="tabs" role="group" aria-label="Dataset">
-        <button type="button" class="tab" data-filter="all" aria-pressed="true">All</button>
-        <button type="button" class="tab" data-filter="extent" aria-pressed="false">Nations</button>
-        <button type="button" class="tab" data-filter="cession" aria-pressed="false">Cessions</button>
-      </div>
       <label class="search">
         <span class="search-label">Find a nation</span>
-        <input id="search" type="search" placeholder="Cherokee, Rome, Comanche" autocomplete="off">
+        <input id="search" type="search" placeholder="Cherokee, Comanche, Choctaw" autocomplete="off">
       </label>
       <nav class="alpha" id="alpha" aria-label="Filter by initial letter"></nav>
       <p class="hint" id="list-meta">Loading dataset…</p>
@@ -65,6 +60,17 @@
     <section class="stage">
       <p id="status" class="status">Loading dataset…</p>
 
+      <div class="intro" id="stage-intro">
+        <h2>Land ceded,<br>nation by nation.</h2>
+        <p class="intro-lede">
+          Each figure here is a cession: land formally given up by treaty, counted cumulatively
+          to a date. A cession signed by several nations is credited in full to each of them, so
+          these totals overlap and never add up to one national number.
+        </p>
+        <p class="hint">Choose a nation from the index, or begin with one of these.</p>
+        <ul class="intro-picks" id="intro-picks"></ul>
+      </div>
+
       <div id="detail" hidden>
         <header class="detail-head">
           <h2 id="polity-name"></h2>
@@ -73,15 +79,15 @@
 
         <div class="readout">
           <div class="stat">
-            <span id="stat-area-label" class="stat-label">Area at year</span>
+            <span id="stat-area-label" class="stat-label">Cumulative ceded</span>
             <span id="stat-area" class="stat-value">—</span>
           </div>
           <div class="stat">
-            <span id="stat-share-label" class="stat-label">Share of world land</span>
+            <span id="stat-share-label" class="stat-label">Cessions to date</span>
             <span id="stat-share" class="stat-value">—</span>
           </div>
           <div class="stat">
-            <span id="stat-window-label" class="stat-label">Record window</span>
+            <span id="stat-window-label" class="stat-label">Latest cession</span>
             <span id="stat-window" class="stat-value">—</span>
           </div>
         </div>
@@ -90,18 +96,18 @@
           <svg id="chart" role="img" aria-labelledby="polity-name" aria-describedby="chart-caption"></svg>
           <div id="chart-tooltip" class="tooltip" hidden></div>
           <p id="chart-caption" class="caption">
-            Extents (Cliopatria) are area at a point in time; US cessions (Royce, 1899) are
-            cumulative land ceded. Both are recorded at uneven intervals, so the lines are step
-            functions, and gaps mean no record — not absence of people.
+            Cessions are plotted cumulatively, as a step function, because they are recorded at
+            uneven intervals. A flat stretch means no land was ceded in that period, not that a
+            nation was absent.
           </p>
         </div>
 
         <div class="map-wrap">
-          <svg id="map" role="img" aria-label="Territory of the selected polity in the current year"></svg>
+          <svg id="map" role="img" aria-label="Ceded land of the selected nation in the current year"></svg>
         </div>
         <p class="caption">
-          Equirectangular, framed to the records shown at the current year. Faint areas are
-          other records in the same series.
+          Equirectangular, framed to the cessions shown at the current year. Faint areas are
+          earlier cessions by the same nation.
         </p>
 
         <div class="transport">
@@ -109,7 +115,7 @@
           <input id="year" type="range" min="0" max="1" step="1" aria-label="Year">
           <output id="year-label" class="year-label"></output>
           <label class="toggle"><input id="log-scale" type="checkbox"> Log scale</label>
-          <label class="toggle"><input id="show-all" type="checkbox"> Show all records</label>
+          <label class="toggle"><input id="show-all" type="checkbox"> Show all cessions</label>
         </div>
       </div>
     </section>

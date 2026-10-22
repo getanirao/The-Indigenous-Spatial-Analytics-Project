@@ -2,7 +2,6 @@
 // No build step, no CDN, no map tiles: hand-rolled SVG only.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const WORLD_LAND_KM2 = 148_940_000;
 const LIST_LIMIT = 2000;
 
 const state = {
@@ -13,7 +12,6 @@ const state = {
   selected: null,
   shard: null,
   intervals: [],
-  filter: "all",
   letter: "",
   year: 0,
   playing: false,
@@ -43,14 +41,6 @@ function formatArea(value) {
 
 function formatYear(year) {
   return year < 0 ? `${Math.abs(year)} BCE` : `${year} CE`;
-}
-
-function formatShare(area) {
-  if (!area) return "—";
-  const pct = (area / WORLD_LAND_KM2) * 100;
-  if (pct >= 1) return `${pct.toFixed(1)}%`;
-  if (pct >= 0.01) return `${pct.toFixed(2)}%`;
-  return `${pct.toFixed(4)}%`;
 }
 
 function niceTicks(min, max, count) {
@@ -85,6 +75,7 @@ function cacheDom() {
   const ids = [
     "landing", "app", "enter", "enter-link", "back-link", "alpha", "plates",
     "search", "list-meta", "polity-list", "status", "detail", "polity-name", "polity-meta",
+    "stage-intro", "intro-picks",
     "stat-area", "stat-share", "stat-window", "stat-area-label", "stat-share-label",
     "stat-window-label", "chart", "map", "chart-tooltip", "play",
     "year", "year-label", "log-scale", "show-all", "footer-credit",
@@ -119,9 +110,10 @@ async function boot() {
     for (const [key, intervals] of Object.entries(series)) state.series.set(key, intervals);
   } catch (error) {
     openApp();
+    dom["stage-intro"].hidden = true;
     showStatus(
       `Dataset not built yet (${error.message}).<br>` +
-        `<code>py pipeline/fetch_cliopatria.py &amp;&amp; py pipeline/build_site_data.py</code>`,
+        `<code>py pipeline/fetch_tribal_cessions.py &amp;&amp; py pipeline/build_site_data.py</code>`,
       true,
     );
     return;
@@ -132,8 +124,8 @@ async function boot() {
   if (meta.counts) {
     const counts = meta.counts;
     const bits = [];
-    if (counts.extents) bits.push(`${counts.extents.toLocaleString()} nations`);
-    if (counts.cessions) bits.push(`${counts.cessions.toLocaleString()} cession entities`);
+    if (counts.polities) bits.push(`${(counts.polities - 1).toLocaleString()} nations`);
+    if (counts.polygons) bits.push(`${counts.polygons.toLocaleString()} cession polygons`);
     bits.push(`${counts.records.toLocaleString()} records`);
     bits.push(`${meta.yearRange[0]} to ${meta.yearRange[1]}`);
     dom["list-meta"].textContent = bits.join(" · ");
@@ -141,6 +133,7 @@ async function boot() {
 
   renderAlpha();
   renderList("");
+  renderIntro();
   wireEvents();
   hideStatus();
   renderPlates();
@@ -166,7 +159,6 @@ function renderList(query) {
   const needle = query.trim().toLowerCase();
   const matches = state.polities.filter(
     (p) =>
-      (state.filter === "all" || p.kind === state.filter) &&
       (!state.letter || initialOf(p.name) === state.letter) &&
       (!needle || p.name.toLowerCase().includes(needle)),
   );
@@ -214,6 +206,35 @@ function renderList(query) {
   }
 }
 
+function renderIntro() {
+  const picks = dom["intro-picks"];
+  if (!picks) return;
+  clear(picks);
+
+  const suggestions = state.polities
+    .filter((polity) => polity.kind === "cession" && polity.key !== "royce-all")
+    .sort((a, b) => b.records - a.records)
+    .slice(0, 3);
+
+  for (const polity of suggestions) {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.addEventListener("click", () => selectPolity(polity.key));
+
+    const name = document.createElement("span");
+    name.textContent = polity.name;
+
+    const meta = document.createElement("span");
+    meta.className = "pick-meta";
+    meta.textContent = `${polity.records.toLocaleString()} cession${polity.records === 1 ? "" : "s"}`;
+
+    button.append(name, meta);
+    li.appendChild(button);
+    picks.appendChild(li);
+  }
+}
+
 async function selectPolity(key) {
   const polity = state.polities.find((p) => p.key === key);
   if (!polity) return;
@@ -236,6 +257,7 @@ async function selectPolity(key) {
   state.intervals = state.series.get(key) || [];
 
   dom.detail.hidden = false;
+  dom["stage-intro"].hidden = true;
   dom["polity-name"].textContent = polity.name;
   dom["polity-meta"].textContent = describePolity(polity);
 
@@ -257,46 +279,29 @@ async function selectPolity(key) {
 function focusYear(polity) {
   const known = state.intervals.filter((item) => item.area !== null);
   if (!known.length) return polity.from;
-  if (polity.kind === "cession") {
-    return known.reduce((best, item) => (item.to > best.to ? item : best), known[0]).to;
-  }
-  const peak = known.reduce((best, item) => (item.area > best.area ? item : best), known[0]);
-  return Math.round((peak.from + peak.to) / 2);
+  return known.reduce((best, item) => (item.to > best.to ? item : best), known[0]).to;
 }
 
 function describePolity(polity) {
-  const bits = [];
-  if (polity.kind === "cession") {
-    bits.push("US land cession record");
-    bits.push(`${state.intervals.length} cession${state.intervals.length === 1 ? "" : "s"}`);
-    if (polity.totalArea) bits.push(`${formatArea(polity.totalArea)} ceded in total`);
-    bits.push("Royce 1899, digitised by USFS");
-  } else {
-    bits.push(polity.type === "RELATION" ? "composite relation" : "polity");
-    bits.push(`${state.intervals.length} source record${state.intervals.length === 1 ? "" : "s"}`);
-    if (polity.peakArea) bits.push(`peak ${formatArea(polity.peakArea)}`);
-    if (polity.wikidata) bits.push(polity.wikidata);
-  }
+  const bits = [
+    `${state.intervals.length} cession${state.intervals.length === 1 ? "" : "s"} on record`,
+  ];
+  if (polity.totalArea) bits.push(`${formatArea(polity.totalArea)} ceded in total`);
+  bits.push("Royce 1899, digitised by the U.S. Forest Service");
   return bits.join(" · ");
 }
 
 function currentArea(year) {
-  if (state.selected && state.selected.kind === "cession") {
-    let total = 0.0;
-    let count = 0;
-    let latest = null;
-    for (const item of state.intervals) {
-      if (item.area === null || item.to > year) continue;
-      total += item.area;
-      count += 1;
-      if (!latest || item.to > latest.to) latest = item;
-    }
-    return { area: count ? total : null, count, latest };
+  let total = 0.0;
+  let count = 0;
+  let latest = null;
+  for (const item of state.intervals) {
+    if (item.area === null || item.to > year) continue;
+    total += item.area;
+    count += 1;
+    if (!latest || item.to > latest.to) latest = item;
   }
-  const active = state.intervals.filter((item) => year >= item.from && year <= item.to && item.area !== null);
-  if (!active.length) return { area: null, count: 0, latest: null };
-  const latest = active.reduce((best, item) => (!best || item.area > best.area ? item : best), null);
-  return { area: latest.area, count: active.length, latest };
+  return { area: count ? total : null, count, latest };
 }
 
 function setYear(year) {
@@ -304,23 +309,10 @@ function setYear(year) {
   dom.year.value = String(year);
   dom["year-label"].textContent = formatYear(year);
 
-  const cession = state.selected && state.selected.kind === "cession";
   const { area, count, latest } = currentArea(year);
-  dom["stat-area-label"].textContent = cession ? "Cumulative ceded" : "Area at year";
-  dom["stat-share-label"].textContent = cession ? "Cessions to date" : "Share of world land";
   dom["stat-area"].textContent = formatArea(area);
-
-  if (cession) {
-    dom["stat-share"].textContent = count ? count.toLocaleString() : "—";
-    dom["stat-window"].textContent = latest ? formatYear(latest.to) : "none yet";
-    dom["stat-window-label"].textContent = "Latest cession";
-  } else {
-    dom["stat-share"].textContent = formatShare(area);
-    dom["stat-window"].textContent = latest
-      ? `${formatYear(latest.from)} – ${formatYear(latest.to)}${count > 1 ? ` · ${count} records` : ""}`
-      : "no record";
-    dom["stat-window-label"].textContent = "Record window";
-  }
+  dom["stat-share"].textContent = count ? count.toLocaleString() : "—";
+  dom["stat-window"].textContent = latest ? formatYear(latest.to) : "none yet";
 
   updateMapVisibility();
   updateChartCursor();
@@ -346,8 +338,6 @@ function chartSegments() {
 function renderChart() {
   const node = dom.chart;
   clear(node);
-  const isCession = Boolean(state.selected && state.selected.kind === "cession");
-  node.classList.toggle("is-cession", isCession);
 
   const width = node.clientWidth || 640;
   const height = 240;
@@ -481,17 +471,10 @@ function onChartPointerMove(event) {
     tooltip.hidden = true;
     return;
   }
-  const cession = Boolean(state.selected && state.selected.kind === "cession");
   tooltip.hidden = false;
-  if (cession) {
-    tooltip.innerHTML =
-      `<strong>${formatYear(year)}</strong><br>ceded to date ${formatArea(area)}` +
-      `<br>${count.toLocaleString()} cession${count === 1 ? "" : "s"}`;
-  } else {
-    tooltip.innerHTML =
-      `<strong>${formatYear(year)}</strong><br>${formatArea(area)}` +
-      (latest && latest.type === "RELATION" ? "<br>composite relation" : "");
-  }
+  tooltip.innerHTML =
+    `<strong>${formatYear(year)}</strong><br>ceded to date ${formatArea(area)}` +
+    `<br>${count.toLocaleString()} cession${count === 1 ? "" : "s"}`;
   tooltip.style.left = `${Math.min(Math.max(sx(year), 80), width - 80)}px`;
   tooltip.style.top = `${margin.top - 4}px`;
 }
@@ -551,7 +534,6 @@ function renderMap() {
   node.appendChild(defs);
 
   const clipped = svg("g", { "clip-path": `url(#${clipId})` });
-  const cession = Boolean(state.selected && state.selected.kind === "cession");
   const group = svg("g", { id: "territories" });
   const toWorld = (lon, lat) => [lon, -lat];
 
@@ -562,8 +544,6 @@ function renderMap() {
     const d = geometryPath(geometry, toWorld);
     if (!d) continue;
     const path = svg("path", { d, class: "territory", "vector-effect": "non-scaling-stroke" });
-    if (item.type === "RELATION") path.classList.add("is-relation");
-    if (cession) path.classList.add("is-cession");
     path.dataset.from = String(item.from);
     path.dataset.to = String(item.to);
     path.bounds = geometryBounds(geometry);
@@ -622,28 +602,16 @@ function fitMap(paths) {
 function updateMapVisibility() {
   if (!state.map) return;
   const year = state.year;
-  const cession = Boolean(state.selected && state.selected.kind === "cession");
-
   let latestTo = -Infinity;
-  if (cession) {
-    for (const item of state.intervals) if (item.to <= year) latestTo = Math.max(latestTo, item.to);
-  }
+  for (const item of state.intervals) if (item.to <= year) latestTo = Math.max(latestTo, item.to);
 
   const shown = [];
   for (const path of dom.map.querySelectorAll("#territories path")) {
-    const from = Number(path.dataset.from);
     const to = Number(path.dataset.to);
-    if (cession) {
-      const done = year >= to;
-      path.style.display = state.showAll || done ? "" : "none";
-      path.style.opacity = to === latestTo ? "1" : done ? "0.6" : "0.25";
-      if (done) shown.push(path);
-      continue;
-    }
-    const inside = year >= from && year <= to;
-    path.style.display = state.showAll || inside ? "" : "none";
-    path.style.opacity = inside ? "1" : "0.18";
-    if (inside) shown.push(path);
+    const done = year >= to;
+    path.style.display = state.showAll || done ? "" : "none";
+    path.style.opacity = to === latestTo ? "1" : done ? "0.6" : "0.25";
+    if (done) shown.push(path);
   }
 
   if (state.showAll) {
@@ -758,7 +726,7 @@ async function renderPlates() {
   const all = state.series.get("royce-all") || [];
   const bucket = shard[all.length ? all[0].g : "royce-cessions"] || [];
   const picks = state.polities
-    .filter((polity) => polity.kind === "cession" && polity.totalArea)
+    .filter((polity) => polity.key !== "royce-all" && polity.totalArea)
     .sort((a, b) => b.totalArea - a.totalArea)
     .slice(0, plates.length);
 
@@ -814,15 +782,6 @@ function wireChrome() {
 
 function wireEvents() {
   dom.search.addEventListener("input", (event) => renderList(event.target.value));
-  for (const tab of document.querySelectorAll(".tab")) {
-    tab.addEventListener("click", () => {
-      state.filter = tab.dataset.filter;
-      for (const other of document.querySelectorAll(".tab")) {
-        other.setAttribute("aria-pressed", String(other === tab));
-      }
-      renderList(dom.search.value);
-    });
-  }
   dom.play.addEventListener("click", () => (state.playing ? stopPlay() : startPlay()));
   dom.year.addEventListener("input", (event) => {
     stopPlay();

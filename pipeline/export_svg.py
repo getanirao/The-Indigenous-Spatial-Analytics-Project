@@ -27,8 +27,6 @@ CHART_HEIGHT = 520
 MAP_WIDTH = 960
 INK = "#1c1b18"
 MUTED = "#6b655b"
-ACCENT = "#2f4858"
-ACCENT_RELATION = "#8a6a1f"
 CESSION = "#8a3324"
 GRID = "#e6e1d6"
 AXIS = "#cbc5b8"
@@ -74,22 +72,14 @@ def short_number(value: float) -> str:
     return f"{value:.0f}"
 
 
-def source_for(meta: dict, is_cession: bool) -> dict:
-    attributions = meta.get("attributions") or {}
-    if is_cession:
-        return {
-            "name": "Tribal Ceded Lands (U.S. Forest Service)",
-            "version": "Royce 1899 digitisation",
-            "doi": "",
-            "license": "Public domain (U.S. Government work)",
-            "attribution": attributions.get("cession") or (
-                "Data: Royce, C. C. (1899). Indian Land Cessions in the United States, "
-                "digitised by the U.S. Forest Service and Claudio Saunt (public domain, "
-                "U.S. Government work). Figure: CC BY-SA 4.0, The Indigenous Spatial "
-                "Analytics Project."
-            ),
-        }
-    return {**meta["source"], "attribution": attributions.get("extent") or meta["attribution"]}
+def source_for(meta: dict) -> dict:
+    return {
+        "name": meta["source"]["name"],
+        "version": "Royce 1899 digitisation",
+        "doi": "",
+        "license": meta["source"]["license"],
+        "attribution": meta["attribution"],
+    }
 
 
 def svg_document(
@@ -136,12 +126,11 @@ def render_chart(meta: dict, polity: dict, intervals: list[dict]) -> str:
     margin = {"top": 74, "right": 32, "bottom": 74, "left": 116}
     plot_w = CHART_WIDTH - margin["left"] - margin["right"]
     plot_h = CHART_HEIGHT - margin["top"] - margin["bottom"]
-    is_cession = polity.get("kind") == "cession"
     known = [item for item in intervals if item["area"]]
     if not known:
         known = []
     areas = [item["area"] for item in known] or [1.0]
-    y_max = max(1.0, sum(areas)) if is_cession else max(areas)
+    y_max = max(1.0, sum(areas))
     rough = nice_ticks(0.0, y_max, 4)
     step_y = rough[1] - rough[0] if len(rough) > 1 else y_max
     y_max = max(step_y, math.ceil(y_max / step_y) * step_y)
@@ -153,34 +142,20 @@ def render_chart(meta: dict, polity: dict, intervals: list[dict]) -> str:
     def sy(area: float) -> float:
         return margin["top"] + plot_h - (area / y_max) * plot_h
 
-    title = f"{polity['name']} — recorded land area over time"
-    if is_cession:
-        title = f"{polity['name']} — cumulative land ceded"
-        description = (
-            f"Cumulative land area ceded by {polity['name']} from {format_year(x_min)} to "
-            f"{format_year(x_max)}; {len(intervals)} cession record(s) totalling "
-            f"{format_area(polity.get('totalArea'))}. Source: Royce, C. C., Indian Land Cessions "
-            f"in the United States (1899), digitised by the U.S. Forest Service and Claudio Saunt "
-            f"(public domain). Figure licensed {meta['license']}. Areas are computed from the "
-            f"digitised polygons, not from surveyed acreage, and a cession shared by several "
-            f"nations is credited in full to each."
-        )
-    else:
-        description = (
-            f"Chart of the land area recorded for {polity['name']} from {format_year(x_min)} to "
-            f"{format_year(x_max)}; peak {format_area(polity['peakArea'])}. "
-            f"Source: {meta['source']['name']} {meta['source']['version']} "
-            f"(https://doi.org/{meta['source']['doi']}), {meta['source']['license']}. "
-            f"Figure licensed {meta['license']}. Values are snapshots at uneven intervals, so the series "
-            f"is a step function and early values are approximate."
-        )
+    title = f"{polity['name']} — cumulative land ceded"
+    description = (
+        f"Cumulative land area ceded by {polity['name']} from {format_year(x_min)} to "
+        f"{format_year(x_max)}; {len(intervals)} cession record(s) totalling "
+        f"{format_area(polity.get('totalArea'))}. Source: Royce, C. C., Indian Land Cessions "
+        f"in the United States (1899), digitised by the U.S. Forest Service and Claudio Saunt "
+        f"(public domain). Figure licensed {meta['license']}. Areas are computed from the "
+        f"digitised polygons, not from surveyed acreage, and a cession shared by several "
+        f"nations is credited in full to each."
+    )
 
     subtitle = (
         f"Cumulative land ceded, {format_year(x_min)} – {format_year(x_max)} · "
         f"{len(intervals)} cession record{'s' if len(intervals) != 1 else ''}"
-        if is_cession
-        else f"Area of recorded polity polygons, {format_year(x_min)} – {format_year(x_max)} · "
-        f"{len(intervals)} source record{'s' if len(intervals) != 1 else ''}"
     )
     body = [
         f'<text x="{margin["left"]}" y="40" font-family="sans-serif" font-size="26" fill="{INK}">{escape(title)}</text>',
@@ -213,49 +188,21 @@ def render_chart(meta: dict, polity: dict, intervals: list[dict]) -> str:
         f'y2="{margin["top"] + plot_h}" stroke="{AXIS}"/>'
     )
 
-    if is_cession:
-        points = [f"M{sx(x_min):.1f},{sy(0):.1f}"]
-        running = 0.0
-        for item in sorted(known, key=lambda entry: entry["to"]):
-            running += item["area"]
-            points.append(f"H{sx(item['to']):.1f}V{sy(running):.1f}")
-        points.append(f"H{sx(x_max):.1f}")
-        line = "".join(points)
-        body.append(f'<path d="{line}L{sx(x_max):.1f},{sy(0):.1f}Z" fill="{CESSION}" fill-opacity="0.1"/>')
-        body.append(f'<path d="{line}" stroke="{CESSION}" stroke-width="4" fill="none" stroke-linejoin="round"/>')
-    else:
-        runs: list[list[dict]] = []
-        run: list[dict] = []
-        previous_to = None
-        for item in sorted(known, key=lambda entry: (entry["from"], entry["to"])):
-            if run and previous_to is not None and item["from"] > previous_to + 1:
-                runs.append(run)
-                run = []
-            run.append(item)
-            previous_to = item["to"]
-        if run:
-            runs.append(run)
-        for chunk in runs:
-            line = f"M{sx(chunk[0]['from']):.1f},{sy(chunk[0]['area']):.1f}"
-            for position, item in enumerate(chunk):
-                if position:
-                    line += f"H{sx(item['from']):.1f}V{sy(item['area']):.1f}"
-                line += f"H{sx(item['to']):.1f}"
-            close = (
-                f"L{sx(chunk[-1]['to']):.1f},{sy(0):.1f}"
-                f"L{sx(chunk[0]['from']):.1f},{sy(0):.1f}Z"
-            )
-            body.append(f'<path d="{line}{close}" fill="{ACCENT}" fill-opacity="0.1"/>')
-            body.append(
-                f'<path d="{line}" stroke="{ACCENT}" stroke-width="4" fill="none" '
-                f'stroke-linejoin="round" stroke-linecap="round"/>'
-            )
+    points = [f"M{sx(x_min):.1f},{sy(0):.1f}"]
+    running = 0.0
+    for item in sorted(known, key=lambda entry: entry["to"]):
+        running += item["area"]
+        points.append(f"H{sx(item['to']):.1f}V{sy(running):.1f}")
+    points.append(f"H{sx(x_max):.1f}")
+    line = "".join(points)
+    body.append(f'<path d="{line}L{sx(x_max):.1f},{sy(0):.1f}Z" fill="{CESSION}" fill-opacity="0.1"/>')
+    body.append(f'<path d="{line}" stroke="{CESSION}" stroke-width="4" fill="none" stroke-linejoin="round"/>')
 
     body.append(
         f'<text x="{margin["left"]}" y="{CHART_HEIGHT - 26}" font-family="sans-serif" font-size="12" fill="{MUTED}">'
         f"Step height is the recorded polygon area; gaps mean no record, not absence of people.</text>"
     )
-    source = source_for(meta, is_cession)
+    source = source_for(meta)
     return svg_document(meta, source, title, description, CHART_WIDTH, CHART_HEIGHT, body)
 
 
@@ -271,30 +218,15 @@ def render_map(
     pad = 26
     content_h = 500
     height = header + content_h + footer
-    is_cession = polity.get("kind") == "cession"
-    title = (
-        f"Land ceded by {polity['name']} by {format_year(year)}"
-        if is_cession
-        else f"{polity['name']} in {format_year(year)}"
+    title = f"Land ceded by {polity['name']} by {format_year(year)}"
+    active = [item for item in intervals if item["to"] <= year]
+    description = (
+        f"All land recorded as ceded by {polity['name']} up to {format_year(year)}, "
+        f"equirectangular projection framed to the recorded polygons. Source: Royce, C. C., "
+        f"Indian Land Cessions in the United States (1899), digitised by the U.S. Forest "
+        f"Service and Claudio Saunt (public domain). Figure licensed {meta['license']}. "
+        f"Cession boundaries are one interpretation of the 1899 schedule, not surveyed borders."
     )
-    if is_cession:
-        active = [item for item in intervals if item["to"] <= year]
-        description = (
-            f"All land recorded as ceded by {polity['name']} up to {format_year(year)}, "
-            f"equirectangular projection framed to the recorded polygons. Source: Royce, C. C., "
-            f"Indian Land Cessions in the United States (1899), digitised by the U.S. Forest "
-            f"Service and Claudio Saunt (public domain). Figure licensed {meta['license']}. "
-            f"Cession boundaries are one interpretation of the 1899 schedule, not surveyed borders."
-        )
-    else:
-        active = [item for item in intervals if year >= item["from"] and year <= item["to"]]
-        description = (
-            f"Recorded territory of {polity['name']} in {format_year(year)}, equirectangular "
-            f"projection framed to the recorded polygons. "
-            f"Source: {meta['source']['name']} {meta['source']['version']} "
-            f"(https://doi.org/{meta['source']['doi']}), {meta['source']['license']}. "
-            f"Figure licensed {meta['license']}."
-        )
 
     layers: list[tuple[list, str]] = []
     min_lon = min_lat = math.inf
@@ -307,7 +239,7 @@ def render_map(
             continue
         geometry = geometries[index]
         polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
-        fill = CESSION if is_cession else (ACCENT_RELATION if item["type"] == "RELATION" else ACCENT)
+        fill = CESSION
         for polygon in polygons:
             for ring in polygon:
                 for lon, lat in ring:
@@ -388,7 +320,7 @@ def render_map(
             f"{escape(format_year(year))}</text>"
         )
 
-    return svg_document(meta, source_for(meta, is_cession), title, description, MAP_WIDTH, height, body)
+    return svg_document(meta, source_for(meta), title, description, MAP_WIDTH, height, body)
 
 
 def slug(text: str) -> str:
@@ -400,6 +332,15 @@ def load_shard(data_dir: Path, shard: str) -> dict:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def rank_by_size(polities: list[dict]) -> list[dict]:
+    """Order by total land ceded."""
+    return sorted(
+        polities,
+        key=lambda polity: polity.get("totalArea") or 0.0,
+        reverse=True,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -425,13 +366,13 @@ def main(argv: list[str] | None = None) -> int:
     series = json.loads((data_dir / "series.json").read_text(encoding="utf-8"))
 
     if args.list:
-        for polity in polities[: args.list]:
+        for polity in rank_by_size(polities)[: args.list]:
             log(f"{polity['key']:<42} {polity['name']} ({polity['from']}..{polity['to']})")
         return 0
 
     targets = list(args.key)
     if args.top:
-        targets.extend(polity["key"] for polity in polities[: args.top])
+        targets.extend(polity["key"] for polity in rank_by_size(polities)[: args.top])
     if not targets:
         parser.error("pass --key or --top (or use --list)")
 
@@ -453,21 +394,16 @@ def main(argv: list[str] | None = None) -> int:
             shard_cache[shard] = load_shard(data_dir, shard)
 
         base = slug(polity["name"])
-        is_cession = polity.get("kind") == "cession"
-        suffix = "cumulative-land-ceded" if is_cession else "land-area-over-time"
-        chart_path = out_dir / f"{base}-{suffix}.svg"
+        chart_path = out_dir / f"{base}-cumulative-land-ceded.svg"
         chart_path.write_text(render_chart(meta, polity, intervals), encoding="utf-8")
         log(f"wrote {chart_path}")
         written += 1
 
         peak = next((i for i in intervals if i["area"]), None)
         if not args.no_map and peak is not None:
-            year = args.year
-            if year is None:
-                year = max((i for i in intervals if i["area"]), key=lambda i: i["area"])["from"]
+            year = args.year if args.year is not None else polity["to"]
             geometries = shard_cache[shard].get(intervals[0].get("g", key) if intervals else key) or []
-            map_suffix = f"ceded-by-{year}" if is_cession else f"{year}-territory"
-            map_path = out_dir / f"{base}-{map_suffix}.svg"
+            map_path = out_dir / f"{base}-ceded-by-{year}.svg"
             map_path.write_text(render_map(meta, polity, intervals, geometries, year), encoding="utf-8")
             log(f"wrote {map_path}")
             written += 1
