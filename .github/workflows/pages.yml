@@ -28,7 +28,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/raw
-          key: royce-cessions-2018-states-50m-terrain
+          key: royce-cessions-2018-states-50m-lakes-50m-terrain
 
       - name: Fetch US cessions
         run: python pipeline/fetch_tribal_cessions.py
@@ -36,12 +36,18 @@ jobs:
       - name: Fetch US state outlines
         run: python pipeline/fetch_us_states.py
 
+      - name: Fetch US lake outlines
+        run: python pipeline/fetch_us_lakes.py
+
       - name: Build site dataset
         run: python pipeline/build_site_data.py --report
 
       - name: Fingerprint the cession layer
         id: fingerprint
-        run: echo "hash=$(sha256sum data/raw/tribal_cessions.geojson | cut -c1-16)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "hash=$(sha256sum data/raw/tribal_cessions.geojson | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "terrain=$(sha256sum pipeline/build_terrain.py | cut -c1-16)" >> "$GITHUB_OUTPUT"
+          echo "lakes=$(sha256sum data/raw/us_lakes.geojson | cut -c1-16)" >> "$GITHUB_OUTPUT"
 
       - name: Cache relief sheets
         uses: actions/cache@v4
@@ -49,10 +55,10 @@ jobs:
           path: |
             site/data/terrain
             site/data/terrain.json
-          key: relief-${{ steps.fingerprint.outputs.hash }}
+          key: relief-${{ steps.fingerprint.outputs.hash }}-${{ steps.fingerprint.outputs.terrain }}-${{ steps.fingerprint.outputs.lakes }}
 
       - name: Render relief sheets
-        if: ${{ !hashFiles('site/data/terrain.json') != '' }}
+        if: ${{ hashFiles('site/data/terrain.json') == '' }}
         run: python pipeline/build_terrain.py --all
 
       - name: Export Commons-ready SVGs

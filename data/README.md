@@ -44,6 +44,17 @@ Pulled from the Natural Earth 50m admin-1 layer (public domain, CC0) and filtere
 states and the District of Columbia. The build simplifies them and uses them two ways: as the
 map backdrop, and to work out which states each ceded tract falls in today.
 
+## Lake outlines (`data/raw/us_lakes.geojson`)
+
+```powershell
+py pipeline\fetch_us_lakes.py           # ~240 KB, 188 lakes
+```
+
+Pulled from the Natural Earth 50m lakes layer (public domain, CC0) and clipped to the North
+American window. Lake surfaces sit above sea level in the elevation tiles, so the relief
+renderer scanline-fills these polygons back to water; without them the Great Lakes read as
+land.
+
 ## Terrain tiles (`data/raw/terrarium/`)
 
 ```powershell

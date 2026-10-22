@@ -28,13 +28,15 @@ totals overlap and never partition the national total.
 1. **Fetch** — `pipeline/fetch_tribal_cessions.py` queries the US Forest Service "Tribal Ceded
    Lands" ArcGIS service, joins the polygons to Royce's 1899 schedule, and writes
    `data/raw/tribal_cessions.geojson`. `pipeline/fetch_us_states.py` pulls Natural Earth
-   (public domain) state outlines for map context.
+   (public domain) state outlines for map context, and `pipeline/fetch_us_lakes.py` pulls
+   lake outlines so large lakes render as water.
 2. **Build** — `pipeline/build_site_data.py` turns that into one small static dataset:
    cumulative-cession series per nation, plus simplified geometry in a single shared bucket.
    Pure standard library — no GDAL, no geopandas.
-3. **Relief** — `pipeline/build_terrain.py` renders a topographic sheet for each nation: shaded
-   relief and contour lines from SRTM elevation, one PNG per cluster of cessions. The viewer
-   places it under the ceded land, and the SVG exporter embeds it.
+3. **Relief** — `pipeline/build_terrain.py` renders one continuous topographic sheet for each
+   nation: shaded relief and contour lines from SRTM elevation, with Natural Earth lake outlines
+   masked back to water, so every map sits on a single base at one zoom and one contour
+   interval. The viewer places it under the ceded land, and the SVG exporter embeds it.
 4. **Serve** — `site/` is a dependency-free static viewer (hand-rolled SVG, no CDNs, no map
    tiles) deployed to GitHub Pages by Actions on every push to `main`.
 5. **Export** — `pipeline/export_svg.py` renders standalone, script-free SVG charts and maps
@@ -45,6 +47,7 @@ totals overlap and never partition the national total.
 ```powershell
 py pipeline\fetch_tribal_cessions.py     # ~6 MB, 717 US cession polygons
 py pipeline\fetch_us_states.py           # ~2 MB, 51 state outlines
+py pipeline\fetch_us_lakes.py            # ~240 KB, 188 lake outlines
 py pipeline\build_site_data.py --report  # writes site/data/
 py pipeline\build_terrain.py --all       # topographic sheets for every nation
 py -m http.server 8000 --directory site  # open http://localhost:8000
@@ -64,8 +67,8 @@ py pipeline\export_svg.py --top 25 --out dist\svg
 | `site/data/polities.json` | Index: key, name, year span, total ceded area, states touched, shard id, `meta` block |
 | `site/data/series.json` | `{key: [{from, to, area, type, i, g, s}]}` — one entry per cession record; `s` lists the states the land now lies in |
 | `site/data/geom/<shard>.json` | `{geometryKey: [<GeoJSON geometry>, ...]}`, addressed by `g` + `i` above, plus `us-states` for the state outlines |
-| `site/data/terrain.json` | `{key: [{file, lon0, lat0, lon1, lat1}]}` — the relief sheet for each nation |
-| `site/data/terrain/*.png` | Shaded relief with contour lines, one per cluster of cessions |
+| `site/data/terrain.json` | `{key: [{file, lon0, lat0, lon1, lat1, zoom, interval}]}` — the relief sheet for each nation |
+| `site/data/terrain/*.png` | One shaded-relief sheet with contour lines per nation |
 
 Keys are `royce-<tribe>`, except the national aggregate `royce-all`. All 717 cession polygons
 share one geometry bucket (`royce-cessions`) referenced by each nation's records, so a joint

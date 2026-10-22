@@ -2,9 +2,10 @@
 """Render USGS-style terrain (hillshade + contour lines) behind the cession maps.
 
 Elevation comes from the AWS Terrain Tiles "terrarium" set, which encodes SRTM height in
-RGB; the tiles are public domain. Each nation's cessions are grouped into clusters, and every
-cluster gets one equirectangular PNG: shaded relief with contour lines, drawn in the same
-lon/lat space the viewer uses, so the viewer can place it with a plain SVG transform.
+RGB; the tiles are public domain. Each nation gets one equirectangular PNG covering all of its
+cessions: shaded relief with contour lines, drawn in the same lon/lat space the viewer uses, so
+the viewer can place it with a plain SVG transform. One sheet per nation keeps every map on a
+single continuous base at one zoom and one contour interval, instead of a collage of tiles.
 
     py pipeline\\build_terrain.py --key royce-cherokee        # one nation
     py pipeline\\build_terrain.py --all --limit 25             # a first batch
@@ -33,44 +34,43 @@ MAX_ZOOM = 13
 MIN_ZOOM = 5
 BAND_COUNT = 24
 SHADE_COUNT = 8
-FADE_LEVELS = 2
 CONTOUR_INDEX = BAND_COUNT * SHADE_COUNT
 INDEX_CONTOUR_INDEX = CONTOUR_INDEX + 1
 VOID_INDEX = INDEX_CONTOUR_INDEX + 1
-FADE_INDEX = VOID_INDEX + 1
-PAPER_INDEX = FADE_INDEX + BAND_COUNT * FADE_LEVELS
-PALETTE_SIZE = PAPER_INDEX + 1
+SHEET_VERSION = 3
 
-PAPER_COLOR = (247, 245, 238)
-FADE_FRACTION = 0.72
-PALETTE_ELEVATION = (
-    (104, 132, 92),
-    (109, 136, 96),
-    (115, 140, 101),
-    (120, 144, 106),
-    (126, 148, 111),
-    (132, 152, 115),
-    (137, 156, 120),
-    (143, 160, 125),
-    (149, 164, 130),
-    (154, 168, 135),
-    (160, 172, 139),
-    (166, 176, 144),
-    (171, 181, 149),
-    (177, 185, 154),
-    (183, 189, 158),
-    (188, 193, 163),
-    (194, 197, 168),
-    (200, 201, 173),
-    (205, 205, 178),
-    (211, 209, 182),
-    (217, 213, 187),
-    (222, 217, 192),
-    (228, 221, 197),
-    (234, 226, 202),
+WATER_COLOR = (205, 216, 221)
+RAMP_COLORS = (
+    (206, 222, 196),
+    (220, 219, 191),
+    (226, 201, 162),
 )
-CONTOUR_COLOR = (108, 76, 46)
-INDEX_CONTOUR_COLOR = (72, 48, 26)
+CONTOUR_COLOR = (170, 142, 106)
+INDEX_CONTOUR_COLOR = (126, 98, 68)
+SHADE_LOW = 0.72
+SHADE_HIGH = 1.06
+
+MIN_SHEET_SPAN_X = 2.2
+MIN_SHEET_SPAN_Y = 1.5
+MIN_SHEET_ASPECT = 2.1
+SHEET_MARGIN = 0.12
+
+
+def elevation_ramp() -> tuple[tuple[int, int, int], ...]:
+    stops = []
+    for band in range(BAND_COUNT):
+        position = band / (BAND_COUNT - 1)
+        if position <= 0.5:
+            first, second, local = RAMP_COLORS[0], RAMP_COLORS[1], position / 0.5
+        else:
+            first, second, local = RAMP_COLORS[1], RAMP_COLORS[2], (position - 0.5) / 0.5
+        stops.append(
+            tuple(int(first[i] + (second[i] - first[i]) * local) for i in range(3))
+        )
+    return tuple(stops)
+
+
+PALETTE_ELEVATION = elevation_ramp()
 
 
 def log(message: str) -> None:
@@ -343,7 +343,7 @@ def build_palette() -> list[tuple[int, int, int]]:
     for band in range(BAND_COUNT):
         red, green, blue = PALETTE_ELEVATION[band]
         for shade in range(SHADE_COUNT):
-            factor = 0.40 + 0.85 * (shade / (SHADE_COUNT - 1))
+            factor = SHADE_LOW + (SHADE_HIGH - SHADE_LOW) * (shade / (SHADE_COUNT - 1))
             palette.append(
                 (
                     min(255, int(red * factor)),
@@ -353,19 +353,7 @@ def build_palette() -> list[tuple[int, int, int]]:
             )
     palette.append(CONTOUR_COLOR)
     palette.append(INDEX_CONTOUR_COLOR)
-    palette.append((150, 160, 172))
-    for band in range(BAND_COUNT):
-        red, green, blue = PALETTE_ELEVATION[band]
-        for level in range(FADE_LEVELS):
-            amount = FADE_FRACTION * (level + 1) / FADE_LEVELS
-            palette.append(
-                (
-                    int(red + (PAPER_COLOR[0] - red) * amount),
-                    int(green + (PAPER_COLOR[1] - green) * amount),
-                    int(blue + (PAPER_COLOR[2] - blue) * amount),
-                )
-            )
-    palette.append(PAPER_COLOR)
+    palette.append(WATER_COLOR)
     return palette
 
 
@@ -407,6 +395,7 @@ def contour_segments(
             edges = ((0, 1), (1, 2), (2, 3), (3, 0))
             for step in range(first_level, last_level + 1):
                 level = step * interval
+                is_index = step % 5 == 0
                 crossings = []
                 for edge_first, edge_second in edges:
                     a = corners[edge_first]
@@ -424,7 +413,9 @@ def contour_segments(
                         point = (col, row + 1 - t)
                     crossings.append(point)
                 if len(crossings) == 2:
-                    segments.append((crossings[0][0], crossings[0][1], crossings[1][0], crossings[1][1]))
+                    segments.append(
+                        (crossings[0][0], crossings[0][1], crossings[1][0], crossings[1][1], is_index)
+                    )
                 elif len(crossings) == 4:
                     centre_x = col + 0.5
                     centre_y = row + 0.5
@@ -432,40 +423,13 @@ def contour_segments(
                         crossings,
                         key=lambda point: math.atan2(point[1] - centre_y, point[0] - centre_x),
                     )
-                    segments.append((ordered[0][0], ordered[0][1], ordered[1][0], ordered[1][1]))
-                    segments.append((ordered[2][0], ordered[2][1], ordered[3][0], ordered[3][1]))
+                    segments.append(
+                        (ordered[0][0], ordered[0][1], ordered[1][0], ordered[1][1], is_index)
+                    )
+                    segments.append(
+                        (ordered[2][0], ordered[2][1], ordered[3][0], ordered[3][1], is_index)
+                    )
     return segments
-
-
-def fade_edges(indices: bytearray, valid: array, width: int, height: int) -> None:
-    """Feather the sheet into the page so cluster edges do not read as cut rectangles."""
-    edge = max(8, int(min(width, height) * 0.06))
-    for row in range(height):
-        base = row * width
-        for col in range(width):
-            distance = min(col, width - 1 - col, row, height - 1 - row)
-            if distance >= edge:
-                continue
-            index = base + col
-            weight = distance / edge
-            current = indices[index]
-            if weight < 0.25:
-                indices[index] = PAPER_INDEX
-                continue
-            if current >= CONTOUR_INDEX:
-                band = 0
-            else:
-                band = min(current // SHADE_COUNT, BAND_COUNT - 1)
-            if weight < 0.55:
-                indices[index] = FADE_INDEX + band * FADE_LEVELS + (FADE_LEVELS - 1)
-                continue
-            if weight < 0.8:
-                indices[index] = FADE_INDEX + band * FADE_LEVELS
-                continue
-            if current >= CONTOUR_INDEX:
-                continue
-            level = current % SHADE_COUNT
-            indices[index] = band * SHADE_COUNT + int(level * weight)
 
 
 def draw_line(indices: bytearray, width: int, height: int, x0: float, y0: float, x1: float, y1: float, value: int) -> None:
@@ -489,12 +453,84 @@ def draw_line(indices: bytearray, width: int, height: int, x0: float, y0: float,
             y0i += sy
 
 
+def load_lakes(path: Path) -> list[tuple[tuple[float, float, float, float], list[list[tuple[float, float]]]]]:
+    """Read lake outlines so positive lake surfaces can be masked back to water."""
+    if not path.exists():
+        log(f"no lake mask at {path}; lakes will read as land")
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    lakes = []
+    for feature in payload.get("features", []):
+        geometry = feature.get("geometry") or {}
+        polygons = (
+            [geometry.get("coordinates") or []]
+            if geometry.get("type") == "Polygon"
+            else geometry.get("coordinates") or []
+        )
+        for polygon in polygons:
+            rings = [
+                [(float(point[0]), float(point[1])) for point in ring]
+                for ring in polygon
+                if len(ring) >= 3
+            ]
+            if not rings:
+                continue
+            outer = rings[0]
+            bounds = (
+                min(point[0] for point in outer),
+                min(point[1] for point in outer),
+                max(point[0] for point in outer),
+                max(point[1] for point in outer),
+            )
+            lakes.append((bounds, rings))
+    return lakes
+
+
+def mask_lakes(
+    valid: array,
+    width: int,
+    height: int,
+    bbox: tuple[float, float, float, float],
+    lakes: list[tuple[tuple[float, float, float, float], list[list[tuple[float, float]]]]],
+) -> None:
+    """Scanline-fill each lake so its surface is water, not shaded land."""
+    lon0, lat0, lon1, lat1 = bbox
+    if lon1 <= lon0 or lat1 <= lat0:
+        return
+    scale_x = width / (lon1 - lon0)
+    scale_y = height / (lat1 - lat0)
+    for (x0, y0, x1, y1), rings in lakes:
+        if x1 < lon0 or x0 > lon1 or y1 < lat0 or y0 > lat1:
+            continue
+        row_start = max(0, int((lat1 - y1) * scale_y))
+        row_stop = min(height, int((lat1 - y0) * scale_y) + 1)
+        for row in range(row_start, row_stop):
+            latitude = lat1 - (row + 0.5) / scale_y
+            crossings = []
+            for ring in rings:
+                previous = ring[-1]
+                for point in ring:
+                    low, high = (previous, point) if previous[1] <= point[1] else (point, previous)
+                    if low[1] <= latitude < high[1]:
+                        share = (latitude - low[1]) / (high[1] - low[1])
+                        crossings.append(low[0] + share * (high[0] - low[0]))
+                    previous = point
+            crossings.sort()
+            base = row * width
+            for index in range(0, len(crossings) - 1, 2):
+                start = max(0, int((crossings[index] - lon0) * scale_x))
+                stop = min(width - 1, int((crossings[index + 1] - lon0) * scale_x))
+                for col in range(start, stop + 1):
+                    valid[base + col] = 0
+
+
 def render(
     terrain: Terrain,
     bbox: tuple[float, float, float, float],
     width: int,
     height: int,
     out_path: Path,
+    lakes: list[tuple[tuple[float, float, float, float], list[list[tuple[float, float]]]]] = (),
 ) -> dict:
     lon0, lat0, lon1, lat1 = bbox
     mid_lat = math.radians((lat0 + lat1) / 2)
@@ -508,11 +544,11 @@ def render(
     grid = build_grid(terrain, zoom, lon0, lat0, lon1, lat1, width, height)
 
     valid = array("b", bytes(width * height))
-    samples = []
     for index, elevation in enumerate(grid):
         if 0.0 < elevation < 9000.0:
             valid[index] = 1
-            samples.append(elevation)
+    mask_lakes(valid, width, height, bbox, lakes)
+    samples = [elevation for index, elevation in enumerate(grid) if valid[index]]
     if not samples:
         samples = [0.0]
     samples.sort()
@@ -521,6 +557,7 @@ def render(
     if highest - lowest < 20.0:
         highest = lowest + 20.0
 
+    grid = smooth_grid(grid, valid, width, height)
     grid = smooth_grid(grid, valid, width, height)
     for index, elevation in enumerate(grid):
         if valid[index]:
@@ -536,10 +573,18 @@ def render(
             deltas.append(abs(grid[base + col] - grid[previous + col]))
     deltas.sort()
     per_pixel = deltas[int(len(deltas) * 0.75)] if deltas else 0.0
-    interval = nice_interval(max(per_pixel * 6.0, (highest - lowest) / 6.0, 1.0))
+    interval = nice_interval(max(per_pixel * 6.0, (highest - lowest) / 10.0, 1.0))
 
     indices = bytearray(width * height)
+    shades = array("f", bytes(width * height * 4))
     band_scale = (BAND_COUNT - 1) / (highest - lowest)
+    meters_x = max((lon1 - lon0) * meters_per_deg_lon / width, 1.0)
+    meters_y = max((lat1 - lat0) * meters_per_deg_lat / height, 1.0)
+    zenith = math.radians(45.0)
+    azimuth = math.radians(315.0)
+    cos_zenith = math.cos(zenith)
+    sin_zenith = math.sin(zenith)
+
     for row in range(height):
         base = row * width
         for col in range(width):
@@ -549,31 +594,43 @@ def render(
             elevation = grid[base + col]
             band = int((elevation - lowest) * band_scale)
             band = 0 if band < 0 else (BAND_COUNT - 1 if band > BAND_COUNT - 1 else band)
-            if row in (0, height - 1) or col in (0, width - 1):
-                indices[base + col] = band * SHADE_COUNT + SHADE_COUNT // 2
+            indices[base + col] = band * SHADE_COUNT + SHADE_COUNT // 2
+            if row < 2 or row >= height - 2 or col < 2 or col >= width - 2:
                 continue
-            dzdx = (grid[base + col + 1] - grid[base + col - 1]) / 2.0
-            dzdy = (grid[base + width + col] - grid[base - width + col]) / 2.0
-            meters_x = max((lon1 - lon0) * meters_per_deg_lon / width, 1.0)
-            meters_y = max((lat1 - lat0) * meters_per_deg_lat / height, 1.0)
-            slope_x = dzdx / meters_x
-            slope_y = dzdy / meters_y
-            slope = math.hypot(slope_x, slope_y)
-            aspect = math.atan2(slope_y, -slope_x)
-            zenith = math.radians(45.0)
-            azimuth = math.radians(315.0)
-            illumination = math.cos(zenith) * math.cos(math.atan(slope)) + math.sin(zenith) * math.sin(
-                math.atan(slope)
-            ) * math.cos(azimuth - aspect)
-            shade = max(0.0, min(1.0, illumination))
-            level = int(shade * (SHADE_COUNT - 1))
+            dzdx = (grid[base + col + 2] - grid[base + col - 2]) / 4.0
+            dzdy = (grid[base + 2 * width + col] - grid[base - 2 * width + col]) / 4.0
+            angle = math.atan(math.hypot(dzdx / meters_x, dzdy / meters_y) * 2.0)
+            aspect = math.atan2(dzdy, -dzdx)
+            shades[base + col] = cos_zenith * math.cos(angle) + sin_zenith * math.sin(angle) * math.cos(
+                azimuth - aspect
+            )
+
+    lit = sorted(shades[index] for index in range(width * height) if valid[index])
+    if lit:
+        low = lit[int(len(lit) * 0.05)]
+        high = lit[int(len(lit) * 0.95)]
+    else:
+        low, high = 0.0, 1.0
+    if high - low < 0.10:
+        middle = (low + high) / 2.0
+        low, high = middle - 0.05, middle + 0.05
+    stretch = (SHADE_COUNT - 1) / (high - low)
+
+    for row in range(2, height - 2):
+        base = row * width
+        for col in range(2, width - 2):
+            index = base + col
+            if not valid[index]:
+                continue
+            level = int((shades[index] - low) * stretch)
             level = 0 if level < 0 else (SHADE_COUNT - 1 if level > SHADE_COUNT - 1 else level)
-            indices[base + col] = band * SHADE_COUNT + level
+            indices[index] = (indices[index] // SHADE_COUNT) * SHADE_COUNT + level
 
-    for x0, y0, x1, y1 in contour_segments(grid, valid, width, height, interval):
-        draw_line(indices, width, height, x0, y0, x1, y1, CONTOUR_INDEX)
-
-    fade_edges(indices, valid, width, height)
+    for x0, y0, x1, y1, is_index in contour_segments(grid, valid, width, height, interval):
+        value = INDEX_CONTOUR_INDEX if is_index else CONTOUR_INDEX
+        draw_line(indices, width, height, x0, y0, x1, y1, value)
+        if is_index:
+            draw_line(indices, width, height, x0, y0 + 1, x1, y1 + 1, value)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(png_encode_indexed(width, height, indices, build_palette()))
@@ -588,37 +645,38 @@ def render(
     }
 
 
-def cluster_bounds(boxes: list[tuple[float, float, float, float]], gap: float = 1.5):
-    """Group cession boxes that sit near each other, then return a bbox per group."""
-    groups: list[list[int]] = []
-    for index, box in enumerate(boxes):
-        placed = False
-        for group in groups:
-            for other in group:
-                if (
-                    box[0] - boxes[other][2] < gap
-                    and boxes[other][0] - box[2] < gap
-                    and box[1] - boxes[other][3] < gap
-                    and boxes[other][1] - box[3] < gap
-                ):
-                    group.append(index)
-                    placed = True
-                    break
-            if placed:
-                break
-        if not placed:
-            groups.append([index])
+def nation_sheet_bounds(
+    boxes: list[tuple[float, float, float, float]],
+) -> tuple[float, float, float, float]:
+    """One bbox around every cession of a nation, padded so the sheet fills the map frame."""
+    lon0 = min(box[0] for box in boxes)
+    lat0 = min(box[1] for box in boxes)
+    lon1 = max(box[2] for box in boxes)
+    lat1 = max(box[3] for box in boxes)
+    mid_lat = math.radians((lat0 + lat1) / 2)
+    cos_lat = max(0.15, math.cos(mid_lat))
 
-    result = []
-    for group in groups:
-        lon0 = min(boxes[i][0] for i in group)
-        lat0 = min(boxes[i][1] for i in group)
-        lon1 = max(boxes[i][2] for i in group)
-        lat1 = max(boxes[i][3] for i in group)
-        margin_x = max((lon1 - lon0) * 0.12, 0.03)
-        margin_y = max((lat1 - lat0) * 0.12, 0.03)
-        result.append((lon0 - margin_x, lat0 - margin_y, lon1 + margin_x, lat1 + margin_y))
-    return result
+    x0 = lon0 * cos_lat
+    x1 = lon1 * cos_lat
+    if x1 - x0 < MIN_SHEET_SPAN_X:
+        middle = (x0 + x1) / 2
+        x0, x1 = middle - MIN_SHEET_SPAN_X / 2, middle + MIN_SHEET_SPAN_X / 2
+    if lat1 - lat0 < MIN_SHEET_SPAN_Y:
+        middle = (lat0 + lat1) / 2
+        lat0, lat1 = middle - MIN_SHEET_SPAN_Y / 2, middle + MIN_SHEET_SPAN_Y / 2
+    if x1 - x0 < MIN_SHEET_ASPECT * (lat1 - lat0):
+        middle = (x0 + x1) / 2
+        half = MIN_SHEET_ASPECT * (lat1 - lat0) / 2
+        x0, x1 = middle - half, middle + half
+
+    margin_x = (x1 - x0) * SHEET_MARGIN
+    margin_y = (lat1 - lat0) * SHEET_MARGIN
+    return (
+        (x0 - margin_x) / cos_lat,
+        lat0 - margin_y,
+        (x1 + margin_x) / cos_lat,
+        lat1 + margin_y,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -627,10 +685,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="site/data/terrain")
     parser.add_argument("--index", default="site/data/terrain.json")
     parser.add_argument("--cache", default="data/raw/terrarium")
+    parser.add_argument("--lakes", default="data/raw/us_lakes.geojson")
     parser.add_argument("--key", action="append", default=[])
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
-    parser.add_argument("--width", type=int, default=760)
+    parser.add_argument("--width", type=int, default=1400)
     parser.add_argument("--force", action="store_true", help="re-render nations that already have sheets")
     args = parser.parse_args(argv)
 
@@ -661,6 +720,7 @@ def main(argv: list[str] | None = None) -> int:
         terrain_index = json.loads(index_path.read_text(encoding="utf-8"))
 
     terrain = Terrain(Path(args.cache))
+    lakes = load_lakes(Path(args.lakes))
     shard_cache: dict[str, dict] = {}
     started = time.time()
 
@@ -668,10 +728,20 @@ def main(argv: list[str] | None = None) -> int:
         try:
             render_nation(
                 key, by_key, series, data_dir, out_dir, index_path, terrain_index, args,
-                terrain, shard_cache,
+                terrain, lakes, shard_cache,
             )
         except Exception as error:
             log(f"failed {key}: {error}")
+    if args.all and not args.limit:
+        keep = {
+            Path(entry["file"]).name
+            for entries in terrain_index.values()
+            for entry in entries
+        }
+        for stale in sorted(out_dir.glob("*.png")):
+            if stale.name not in keep:
+                stale.unlink()
+                log(f"removed stale {stale.name}")
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_text(
         json.dumps(terrain_index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
@@ -693,6 +763,7 @@ def render_nation(
     terrain_index: dict,
     args,
     terrain: "Terrain",
+    lakes: list[tuple[tuple[float, float, float, float], list[list[tuple[float, float]]]]],
     shard_cache: dict,
 ) -> None:
     polity = by_key.get(key)
@@ -731,28 +802,36 @@ def render_nation(
         return
 
     existing = terrain_index.get(key)
-    if existing and not args.force and all(
-        (out_dir / Path(entry["file"]).name).exists() for entry in existing
+    if (
+        existing
+        and not args.force
+        and all(entry.get("v") == SHEET_VERSION for entry in existing)
+        and all((out_dir / Path(entry["file"]).name).exists() for entry in existing)
     ):
         return
 
-    entries = []
-    for number, bbox in enumerate(cluster_bounds(boxes)):
-        lon0, lat0, lon1, lat1 = bbox
-        span_x = (lon1 - lon0) * 111320.0 * math.cos(math.radians((lat0 + lat1) / 2))
-        span_y = (lat1 - lat0) * 110574.0
-        width = args.width
-        height = max(120, min(900, int(round(width * span_y / max(span_x, 1.0)))))
-        name = f"{key}-{number}.png"
-        entry = render(terrain, bbox, width, height, out_dir / name)
-        entry["file"] = f"terrain/{name}"
-        entries.append(entry)
-    terrain_index[key] = entries
+    bbox = nation_sheet_bounds(boxes)
+    lon0, lat0, lon1, lat1 = bbox
+    mid_lat = math.radians((lat0 + lat1) / 2)
+    span_x = max((lon1 - lon0) * 111320.0 * math.cos(mid_lat), 1.0)
+    span_y = (lat1 - lat0) * 110574.0
+    width = args.width
+    height = int(round(width * span_y / span_x))
+    if height > 900:
+        height = 900
+        width = max(300, int(round(height * span_x / span_y)))
+    height = max(300, height)
+
+    name = f"{key}.png"
+    entry = render(terrain, bbox, width, height, out_dir / name, lakes)
+    entry["file"] = f"terrain/{name}"
+    entry["v"] = SHEET_VERSION
+    terrain_index[key] = [entry]
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_text(
         json.dumps(terrain_index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
-    log(f"{polity['name']}: {len(entries)} cluster(s) rendered")
+    log(f"{polity['name']}: {width}x{height} sheet, zoom {entry['zoom']}, {entry['interval']:g} m")
 
 
 if __name__ == "__main__":

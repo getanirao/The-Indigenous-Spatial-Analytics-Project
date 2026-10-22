@@ -239,19 +239,19 @@ a:hover { text-decoration-color: currentColor; }
 
 .map-wrap svg { width: 100%; display: block; }
 
-.map-relief image { opacity: 0.95; }
+.map-relief image { opacity: 1; }
 
 .state-outline {
   fill: none;
-  stroke: #b9b2a3;
-  stroke-width: 0.7;
+  stroke: #a9a294;
+  stroke-width: 0.75;
   vector-effect: non-scaling-stroke;
 }
 
 .cession-outline {
   fill: none;
   stroke: #a8322a;
-  stroke-width: 1.6;
+  stroke-width: 1.35;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }

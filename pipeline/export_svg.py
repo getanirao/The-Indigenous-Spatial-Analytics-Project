@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Render standalone, Commons-ready SVGs from the built dataset in site/data/.
 
-Output has no scripts, no external references, and no embedded raster, with `<title>`,
-`<desc>` and a metadata block carrying source, version and license. Standard library only.
+Output has no scripts and no external references; the relief sheet is embedded as a PNG data
+URI, and `<title>`, `<desc>` and a metadata block carry source, version and license. Standard
+library only.
 
 Examples
 --------
-    py pipeline/export_svg.py --key roman-empire --year 117
+    py pipeline/export_svg.py --key royce-cherokee --year 1866
     py pipeline/export_svg.py --top 12
-    py pipeline/export_svg.py --key mongol-empire --out dist/svg
+    py pipeline/export_svg.py --key royce-comanche --out dist/svg
     py pipeline/export_svg.py --list 50
 """
 
@@ -234,7 +235,7 @@ def render_map(
         f"boundaries for context. The ceded land now lies in: "
         f"{', '.join(states_touched) if states_touched else 'no mapped state'}. "
         f"Source: Royce, C. C., Indian Land Cessions in the United States (1899), digitised "
-        f"by the U.S. Forest Service and Claudio Saunt (public domain). State outlines: "
+        f"by the U.S. Forest Service and Claudio Saunt (public domain). State and lake outlines: "
         f"Natural Earth (public domain). Figure licensed {meta['license']}. "
         f"Cession boundaries are one interpretation of the 1899 schedule, not surveyed borders."
     )
@@ -268,20 +269,19 @@ def render_map(
         polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
         for polygon in polygons:
             for ring in polygon:
-                for lon, lat in ring:
-                    min_lon = min(min_lon, lon)
-                    max_lon = max(max_lon, lon)
-                    min_lat = min(min_lat, lat)
-                    max_lat = max(max_lat, lat)
                 state_layers.append((ring, STATE_LINE))
 
     if not math.isfinite(min_lon):
-        min_lon, max_lon, min_lat, max_lat = -170.0, -20.0, 15.0, 72.0
+        if relief:
+            min_lon, max_lon = relief[0]["lon0"], relief[0]["lon1"]
+            min_lat, max_lat = relief[0]["lat0"], relief[0]["lat1"]
+        else:
+            min_lon, max_lon, min_lat, max_lat = -170.0, -20.0, 15.0, 72.0
 
     mid_lat = (min_lat + max_lat) / 2
     lon_scale = max(0.15, math.cos(math.radians(mid_lat)))
-    span_x = max(0.05, (max_lon - min_lon) * lon_scale)
-    span_y = max(0.05, max_lat - min_lat)
+    span_x = max(1.2, (max_lon - min_lon) * lon_scale)
+    span_y = max(0.9, max_lat - min_lat)
     scale = min((MAP_WIDTH - 2 * pad) / span_x, (content_h - 2 * pad) / span_y)
     center_lon = (min_lon + max_lon) / 2
     center_lat = (min_lat + max_lat) / 2
@@ -350,11 +350,11 @@ def render_map(
             f'<polygon points="{points}" fill="none" stroke="{color}" stroke-width="0.7"/>'
         )
 
-    for ring, fill in layers:
+    for ring, color in layers:
         points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (project(lon, lat) for lon, lat in ring))
         body.append(
-            f'<polygon points="{points}" fill="#fbfaf6" fill-opacity="0.9" stroke="{INK}" '
-            f'stroke-width="1.1"/>'
+            f'<polygon points="{points}" fill="{color}" fill-opacity="0.10" stroke="{color}" '
+            f'stroke-width="1.2" stroke-linejoin="round"/>'
         )
 
     body.append("</g>")

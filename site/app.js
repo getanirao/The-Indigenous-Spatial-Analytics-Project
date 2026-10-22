@@ -285,7 +285,7 @@ function geometryPath(geometry, project) {
     for (const ring of polygon) {
       ring.forEach((point, index) => {
         const [x, y] = project(point[0], point[1]);
-        parts.push(`${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`);
+        parts.push(`${index === 0 ? "M" : "L"}${x.toFixed(3)},${y.toFixed(3)}`);
       });
       parts.push("Z");
     }
@@ -312,11 +312,37 @@ function stateOutlines() {
   return Array.isArray(bucket) ? bucket : [];
 }
 
+function nationBounds() {
+  let box = null;
+  for (const item of state.intervals) {
+    if (item.i === null) continue;
+    const geometry = (state.shard[item.g] || [])[item.i];
+    if (!geometry) continue;
+    const bounds = geometryBounds(geometry);
+    if (!bounds) continue;
+    box = box
+      ? [
+          Math.min(box[0], bounds[0]),
+          Math.min(box[1], bounds[1]),
+          Math.max(box[2], bounds[2]),
+          Math.max(box[3], bounds[3]),
+        ]
+      : bounds;
+  }
+  return box;
+}
+
 function renderMap() {
   const node = dom.map;
   clear(node);
   const width = node.clientWidth || 900;
-  const height = Math.max(360, Math.min(560, Math.round(width * 0.52)));
+  const box = nationBounds();
+  let height = 500;
+  if (box) {
+    const spanX = Math.max(1.2, (box[2] - box[0]) * Math.cos((((box[1] + box[3]) / 2) * Math.PI) / 180));
+    const spanY = Math.max(0.9, box[3] - box[1]);
+    height = Math.max(300, Math.min(620, Math.round((width * spanY) / spanX)));
+  }
   node.setAttribute("width", width);
   node.setAttribute("height", height);
   node.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -373,7 +399,7 @@ function renderMap() {
 
   node.appendChild(svg("rect", { x: 0.5, y: 0.5, width: width - 1, height: height - 1, class: "map-frame" }));
 
-  state.map = { group, stateGroup, relief, labels, width, height, pad: 26 };
+  state.map = { group, stateGroup, relief, labels, width, height, pad: 0.05 };
   updateMapVisibility();
 }
 
@@ -412,7 +438,11 @@ function fitMap(visible) {
   const spanX = Math.max(1.2, (maxLon - minLon) * lonScale);
   const spanY = Math.max(0.9, maxLat - minLat);
   const cap = Math.min(width, height) / 0.12;
-  const scale = Math.min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY, cap);
+  const scale = Math.min(
+    (width * (1 - 2 * pad)) / spanX,
+    (height * (1 - 2 * pad)) / spanY,
+    cap,
+  );
   const centerLon = (minLon + maxLon) / 2;
   const centerLat = (minLat + maxLat) / 2;
   const xScale = lonScale * scale;
@@ -423,16 +453,31 @@ function fitMap(visible) {
   stateGroup.setAttribute("transform", transform);
   relief.setAttribute("transform", transform);
 
-  clear(labels);
+  const candidates = [];
   for (const path of stateGroup.querySelectorAll("path")) {
-    if (!touched.has(path.dataset.name)) continue;
-    const bounds = path.bounds;
-    if (!bounds) continue;
+    if (!touched.has(path.dataset.name) || !path.bounds) continue;
+    const [x0, y0, x1, y1] = path.bounds;
+    candidates.push({ name: path.dataset.name, bounds: path.bounds, area: (x1 - x0) * (y1 - y0) });
+  }
+  candidates.sort((first, second) => second.area - first.area);
+
+  clear(labels);
+  const placed = [];
+  for (const candidate of candidates) {
+    const bounds = candidate.bounds;
     const x = xScale * ((bounds[0] + bounds[2]) / 2) + tx;
     const y = -scale * ((bounds[1] + bounds[3]) / 2) + ty;
-    if (x < 12 || x > width - 12 || y < 12 || y > height - 12) continue;
+    const halfWidth = (candidate.name.length * 7.2 + 10) / 2;
+    const rect = [x - halfWidth, y - 7, x + halfWidth, y + 7];
+    if (rect[0] < 8 || rect[2] > width - 8 || rect[1] < 8 || rect[3] > height - 8) continue;
+    const overlaps = placed.some(
+      (other) =>
+        !(rect[2] < other[0] || rect[0] > other[2] || rect[3] < other[1] || rect[1] > other[3]),
+    );
+    if (overlaps) continue;
+    placed.push(rect);
     const label = svg("text", { x, y, "text-anchor": "middle", class: "state-label" });
-    label.textContent = path.dataset.name.toUpperCase();
+    label.textContent = candidate.name.toUpperCase();
     labels.appendChild(label);
   }
 }

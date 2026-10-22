@@ -12,8 +12,9 @@ Commons file pages.
 > georeferenced by the U.S. Forest Service with Claudio Saunt — public domain (U.S. Government
 > work).
 >
-> **State outlines:** Natural Earth (public domain, CC0),
-> https://www.naturalearthdata.com — used only as map context for modern state boundaries.
+> **State and lake outlines:** Natural Earth (public domain, CC0),
+> https://www.naturalearthdata.com — used only as map context for modern state boundaries and
+> water bodies.
 >
 > **Relief:** SRTM elevation via the AWS Terrain Tiles "terrarium" set (public domain, NASA) —
 > used only to draw shaded relief and contour lines behind the cession boundaries.
@@ -33,7 +34,7 @@ title under which the work was published and under which it is catalogued.
 | --- | --- | --- | --- |
 | [Tribal Ceded Lands](https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TribalCessionLands_01/MapServer) (US Forest Service) | 2018 revision | Public domain (US Government work) | Cession polygons, dates, signatory nations |
 | Royce, *Indian Land Cessions in the United States* (1899) | [LOC 13023487](https://www.loc.gov/item/13023487/) | Public domain | Underlying schedule and maps |
-| [Natural Earth](https://www.naturalearthdata.com) 50m admin-1 | 5.1.2 | Public domain (CC0) | Modern state boundaries as map context |
+| [Natural Earth](https://www.naturalearthdata.com) 50m admin-1 and 50m lakes | 5.1.2 | Public domain (CC0) | Modern state boundaries and lake outlines as map context |
 | [SRTM via AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (terrarium) | SRTM 3 v3 | Public domain (NASA) | Elevation used to draw shaded relief and contour lines |
 | Claudio Saunt, "Indian Land Cessions" digital companion | 2018 | Public domain (US Government work) | Georeferencing and schedule join |
 
