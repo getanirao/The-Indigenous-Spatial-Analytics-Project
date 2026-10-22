@@ -234,7 +234,7 @@ a:hover { text-decoration-color: currentColor; }
 
 .map-wrap {
   border: 1px solid var(--rule);
-  background: #f4f1e9;
+  background: #f7f5ef;
 }
 
 .map-wrap svg { width: 100%; display: block; }
@@ -262,7 +262,7 @@ a:hover { text-decoration-color: currentColor; }
   font-size: 9px;
   letter-spacing: 0.12em;
   paint-order: stroke;
-  stroke: rgba(255, 255, 255, 0.55);
+  stroke: rgba(247, 245, 239, 0.72);
   stroke-width: 2px;
 }
 
