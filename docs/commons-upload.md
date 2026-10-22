@@ -40,7 +40,7 @@ new revision instead so the history stays intact.
 ```
 {{Information
 |description={{en|1=Land ceded by the [[:en:Cherokee|Cherokee]] up to 1866, accumulated from
-the Royce schedule of Indian land cessions (1899), digitised by the U.S. Forest Service.
+the Royce schedule of Native American land cessions (1899), digitised by the U.S. Forest Service.
 Cessions are recorded at uneven intervals and the line is therefore a step function. Areas are
 computed from the digitised polygons, not from surveyed acreage, and a cession shared by
 several nations is credited in full to each.}}
@@ -69,7 +69,7 @@ keeps every figure consistent when the source is revised.
 
 Verify exact names on Commons before saving; category names drift.
 
-- `[[Category:Maps of the Indian land cessions]]`
+- `[[Category:Maps of the Indian land cessions]]` (keep the Commons category name as it stands)
 - `[[Category:Land cessions by the United States]]`
 - `[[Category:Area charts]]`
 - A nation category, e.g. `[[Category:Cherokee]]`

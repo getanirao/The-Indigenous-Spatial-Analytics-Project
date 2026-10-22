@@ -28,7 +28,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/raw
-          key: royce-cessions-2018-states-50m
+          key: royce-cessions-2018-states-50m-terrain
 
       - name: Fetch US cessions
         run: python pipeline/fetch_tribal_cessions.py
@@ -38,6 +38,9 @@ jobs:
 
       - name: Build site dataset
         run: python pipeline/build_site_data.py --report
+
+      - name: Render relief sheets
+        run: python pipeline/build_terrain.py --all
 
       - name: Export Commons-ready SVGs
         continue-on-error: true

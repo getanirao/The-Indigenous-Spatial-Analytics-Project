@@ -18,6 +18,7 @@ const state = {
   timer: null,
   showAll: false,
   map: null,
+  terrain: {},
 };
 
 const dom = {};
@@ -72,6 +73,11 @@ async function boot() {
     state.polities = index.polities || [];
     const series = await loadJson("data/series.json");
     for (const [key, intervals] of Object.entries(series)) state.series.set(key, intervals);
+    try {
+      state.terrain = await loadJson("data/terrain.json");
+    } catch (error) {
+      state.terrain = {};
+    }
   } catch (error) {
     openApp();
     showError(error);
@@ -325,6 +331,20 @@ function renderMap() {
   const clipped = svg("g", { "clip-path": `url(#${clipId})` });
   const toWorld = (lon, lat) => [lon, -lat];
 
+  const relief = svg("g", { class: "map-relief" });
+  for (const entry of state.terrain[state.selected ? state.selected.key : ""] || []) {
+    const image = svg("image", {
+      x: entry.lon0,
+      y: -entry.lat1,
+      width: entry.lon1 - entry.lon0,
+      height: entry.lat1 - entry.lat0,
+      preserveAspectRatio: "none",
+      href: `data/${entry.file}`,
+    });
+    relief.appendChild(image);
+  }
+  clipped.appendChild(relief);
+
   const stateGroup = svg("g", { class: "map-states" });
   for (const entry of stateOutlines()) {
     const path = svg("path", { d: geometryPath(entry.geometry, toWorld), class: "state-outline" });
@@ -353,13 +373,13 @@ function renderMap() {
 
   node.appendChild(svg("rect", { x: 0.5, y: 0.5, width: width - 1, height: height - 1, class: "map-frame" }));
 
-  state.map = { group, stateGroup, labels, width, height, pad: 26 };
+  state.map = { group, stateGroup, relief, labels, width, height, pad: 26 };
   updateMapVisibility();
 }
 
 function fitMap(visible) {
   if (!state.map) return;
-  const { group, stateGroup, labels, width, height, pad } = state.map;
+  const { group, stateGroup, relief, labels, width, height, pad } = state.map;
   let minLon = Infinity;
   let maxLon = -Infinity;
   let minLat = Infinity;
@@ -383,6 +403,7 @@ function fitMap(visible) {
   if (!Number.isFinite(minLon)) {
     group.removeAttribute("transform");
     stateGroup.removeAttribute("transform");
+    relief.removeAttribute("transform");
     return;
   }
 
@@ -400,6 +421,7 @@ function fitMap(visible) {
   const transform = `matrix(${xScale.toFixed(4)} 0 0 ${scale.toFixed(4)} ${tx.toFixed(2)} ${ty.toFixed(2)})`;
   group.setAttribute("transform", transform);
   stateGroup.setAttribute("transform", transform);
+  relief.setAttribute("transform", transform);
 
   clear(labels);
   for (const path of stateGroup.querySelectorAll("path")) {

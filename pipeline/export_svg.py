@@ -15,6 +15,7 @@ Examples
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
 import re
@@ -214,6 +215,7 @@ def render_map(
     geometries: list,
     year: int,
     states: list[dict],
+    relief: list[dict],
 ) -> str:
     header = 56
     footer = 64
@@ -290,6 +292,22 @@ def render_map(
             header + content_h / 2 - (lat - center_lat) * scale,
         )
 
+    relief_images = []
+    for entry in relief:
+        path = Path(entry.get("path", ""))
+        if not path.exists():
+            continue
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        relief_images.append(
+            f'<image x="{entry["lon0"]:.4f}" y="{entry["lat0"]:.4f}" '
+            f'width="{entry["lon1"] - entry["lon0"]:.4f}" height="{entry["lat1"] - entry["lat0"]:.4f}" '
+            f'preserveAspectRatio="none" '
+            f'transform="matrix({lon_scale * scale:.6f} 0 0 {-scale:.6f} '
+            f'{MAP_WIDTH / 2 - lon_scale * scale * center_lon:.4f} '
+            f'{header + content_h / 2 + scale * center_lat:.4f})" '
+            f'href="data:image/png;base64,{encoded}"/>'
+        )
+
     body = [
         f'<text x="16" y="34" font-family="sans-serif" font-size="26" fill="{INK}">{escape(title)}</text>',
         f'<defs><clipPath id="map-clip"><rect x="0" y="{header}" width="{MAP_WIDTH}" '
@@ -323,6 +341,8 @@ def render_map(
             f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{header}" y2="{header + content_h}" stroke="{GRID}"/>'
         )
         longitude += step
+
+    body.extend(relief_images)
 
     for ring, color in state_layers:
         points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (project(lon, lat) for lon, lat in ring))
@@ -397,6 +417,10 @@ def main(argv: list[str] | None = None) -> int:
     if not (data_dir / "polities.json").exists():
         raise SystemExit(f"{data_dir}/polities.json not found — run pipeline/build_site_data.py first")
 
+    terrain_path = data_dir / "terrain.json"
+    terrain_index = (
+        json.loads(terrain_path.read_text(encoding="utf-8")) if terrain_path.exists() else {}
+    )
     index_payload = json.loads((data_dir / "polities.json").read_text(encoding="utf-8"))
     meta = index_payload["meta"]
     polities = index_payload["polities"]
@@ -441,9 +465,15 @@ def main(argv: list[str] | None = None) -> int:
             year = args.year if args.year is not None else polity["to"]
             geometries = shard_cache[shard].get(intervals[0].get("g", key) if intervals else key) or []
             states = shard_cache[shard].get("us-states") or []
+            relief = []
+            for entry in terrain_index.get(key, []):
+                path = data_dir / "terrain" / Path(entry["file"]).name
+                if path.exists():
+                    relief.append({**entry, "path": str(path)})
             map_path = out_dir / f"{base}-ceded-by-{year}.svg"
             map_path.write_text(
-                render_map(meta, polity, intervals, geometries, year, states), encoding="utf-8"
+                render_map(meta, polity, intervals, geometries, year, states, relief),
+                encoding="utf-8",
             )
             log(f"wrote {map_path}")
             written += 1

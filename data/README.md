@@ -44,6 +44,16 @@ Pulled from the Natural Earth 50m admin-1 layer (public domain, CC0) and filtere
 states and the District of Columbia. The build simplifies them and uses them two ways: as the
 map backdrop, and to work out which states each ceded tract falls in today.
 
+## Terrain tiles (`data/raw/terrarium/`)
+
+```powershell
+py pipeline\build_terrain.py --all      # renders site/data/terrain/*.png
+```
+
+Elevation comes from the AWS Terrain Tiles "terrarium" set, which encodes SRTM height in the
+RGB of ordinary PNG tiles. The fetcher caches them under `data/raw/terrarium/<z>/<x>/<y>.png`
+and decodes them in pure Python, so the relief pipeline needs no image libraries.
+
 ## Verification
 
 Run the build with `--report` to print record counts and the largest nations by total ceded
