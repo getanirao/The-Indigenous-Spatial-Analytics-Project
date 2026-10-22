@@ -1,0 +1,19 @@
+# Raw upstream data (large, re-downloadable) and generated artifacts
+/data/raw/
+/site/data/*
+/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Keep generated dirs present in git
+!/site/data/.gitkeep

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nations' Land Over Time</title>
+<meta name="description" content="How much land each nation controlled after European contact, built from the open Cliopatria and Royce datasets.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<section class="landing" id="landing">
+  <nav class="landing-nav">
+    <a href="#" id="enter-link">atlas</a>
+    <a href="https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project/blob/main/ATTRIBUTION.md">sources</a>
+    <a href="https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project">repository</a>
+  </nav>
+
+  <div class="plates" id="plates">
+    <button type="button" class="plate plate-a"></button>
+    <button type="button" class="plate plate-b"></button>
+    <button type="button" class="plate plate-c"></button>
+    <button type="button" class="plate plate-d"></button>
+    <button type="button" class="plate plate-e"></button>
+  </div>
+
+  <div class="landing-center">
+    <h1>Nations’ land<br><em>over time</em></h1>
+    <p class="landing-sub">Sovereignty and dispossession after European contact · 1492 – 2024</p>
+    <button type="button" class="enter" id="enter">Explore</button>
+  </div>
+
+  <p class="landing-foot">Cliopatria · Royce, <cite>Indian Land Cessions</cite> (1899) · CC BY-SA 4.0</p>
+</section>
+
+<div id="app" hidden>
+  <header class="site-header">
+    <div class="brand">
+      <h1>Nations’ Land Over Time</h1>
+      <p class="tagline">Sovereignty and land after European contact · 1492 – 2024</p>
+    </div>
+    <nav class="site-nav">
+      <a href="#" id="back-link">cover</a>
+      <a href="https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project/blob/main/ATTRIBUTION.md">sources</a>
+      <a href="https://github.com/getanirao/The-Indigenous-Spatial-Analytics-Project">repository</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="tabs" role="group" aria-label="Dataset">
+        <button type="button" class="tab" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" class="tab" data-filter="extent" aria-pressed="false">Nations</button>
+        <button type="button" class="tab" data-filter="cession" aria-pressed="false">Cessions</button>
+      </div>
+      <label class="search">
+        <span class="search-label">Find a nation</span>
+        <input id="search" type="search" placeholder="Cherokee, Rome, Comanche" autocomplete="off">
+      </label>
+      <nav class="alpha" id="alpha" aria-label="Filter by initial letter"></nav>
+      <p class="hint" id="list-meta">Loading dataset…</p>
+      <ul id="polity-list" class="polity-list"></ul>
+    </aside>
+
+    <section class="stage">
+      <p id="status" class="status">Loading dataset…</p>
+
+      <div id="detail" hidden>
+        <header class="detail-head">
+          <h2 id="polity-name"></h2>
+          <p id="polity-meta" class="muted"></p>
+        </header>
+
+        <div class="readout">
+          <div class="stat">
+            <span id="stat-area-label" class="stat-label">Area at year</span>
+            <span id="stat-area" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span id="stat-share-label" class="stat-label">Share of world land</span>
+            <span id="stat-share" class="stat-value">—</span>
+          </div>
+          <div class="stat">
+            <span id="stat-window-label" class="stat-label">Record window</span>
+            <span id="stat-window" class="stat-value">—</span>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <svg id="chart" role="img" aria-labelledby="polity-name" aria-describedby="chart-caption"></svg>
+          <div id="chart-tooltip" class="tooltip" hidden></div>
+          <p id="chart-caption" class="caption">
+            Extents (Cliopatria) are area at a point in time; US cessions (Royce, 1899) are
+            cumulative land ceded. Both are recorded at uneven intervals, so the lines are step
+            functions, and gaps mean no record — not absence of people.
+          </p>
+        </div>
+
+        <div class="map-wrap">
+          <svg id="map" role="img" aria-label="Territory of the selected polity in the current year"></svg>
+        </div>
+        <p class="caption">
+          Equirectangular, framed to the records shown at the current year. Faint areas are
+          other records in the same series.
+        </p>
+
+        <div class="transport">
+          <button id="play" type="button" class="play" aria-label="Play or pause the timeline">▶</button>
+          <input id="year" type="range" min="0" max="1" step="1" aria-label="Year">
+          <output id="year-label" class="year-label"></output>
+          <label class="toggle"><input id="log-scale" type="checkbox"> Log scale</label>
+          <label class="toggle"><input id="show-all" type="checkbox"> Show all records</label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p id="footer-credit" class="muted"></p>
+  </footer>
+</div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>
