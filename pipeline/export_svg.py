@@ -24,16 +24,15 @@ import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-CHART_WIDTH = 960
-CHART_HEIGHT = 520
-MAP_WIDTH = 960
+CHART_WIDTH = 1200
+CHART_HEIGHT = 1000
+MAP_WIDTH = 1200
 INK = "#1c1b18"
 MUTED = "#6b655b"
-CESSION = "#8a3324"
+CESSION = "#007c78"
 GRID = "#e6e1d6"
 AXIS = "#cbc5b8"
-STATE_LINE = "#b9b2a3"
-
+STATE_LINE = "#737a78"
 
 def log(message: str) -> None:
     print(f"[export] {message}", flush=True)
@@ -45,6 +44,18 @@ def format_year(year: int) -> str:
 
 def format_area(area: float | None) -> str:
     return "unknown" if area is None else f"{area:,.0f} km²"
+
+
+def cession_color(index: int, count: int) -> str:
+    stops = ((246, 213, 92), (237, 139, 35), (198, 40, 40))
+    progress = 0.0 if count <= 1 else index / (count - 1)
+    segment = min(1, int(progress * 2))
+    within_segment = progress * 2 - segment
+    channels = tuple(
+        round(start + (end - start) * within_segment)
+        for start, end in zip(stops[segment], stops[segment + 1])
+    )
+    return "#" + "".join(f"{channel:02x}" for channel in channels)
 
 
 def nice_ticks(minimum: float, maximum: float, count: int) -> list[float]:
@@ -85,6 +96,21 @@ def source_for(meta: dict) -> dict:
     }
 
 
+def wrapped_text(value: str, limit: int) -> list[str]:
+    words = value.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        if current and len(current) + len(word) + 1 > limit:
+            lines.append(current)
+            current = word
+        else:
+            current = f"{current} {word}".strip()
+    if current:
+        lines.append(current)
+    return lines
+
+
 def svg_document(
     meta: dict,
     source: dict,
@@ -94,6 +120,8 @@ def svg_document(
     height: int,
     body: list[str],
 ) -> str:
+    attribution_lines = wrapped_text(source["attribution"], 185)
+    attribution_lines = attribution_lines[:4]
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{width}" height="{height}" '
@@ -115,10 +143,14 @@ def svg_document(
             "</metadata>",
             f'<rect width="{width}" height="{height}" fill="#ffffff"/>',
             *body,
-            f'<text x="{width - 16}" y="{height - 12}" text-anchor="end" font-family="sans-serif" '
-            f'font-size="12" fill="{MUTED}">Data: {escape(source["name"])} '
-            f'({escape(source["license"])}) · Figure: {escape(meta["license"])} · '
-            f"The Indigenous Spatial Analytics Project</text>",
+            f'<line x1="32" x2="{width - 32}" y1="{height - 72}" y2="{height - 72}" stroke="{GRID}"/>',
+            *[
+                f'<text x="32" y="{height - 56 + index * 13}" font-family="sans-serif" font-size="9" fill="{MUTED}">'
+                f"{escape(line)}</text>"
+                for index, line in enumerate(attribution_lines)
+            ],
+            f'<text x="32" y="{height - 12}" font-family="sans-serif" font-size="9" fill="{MUTED}">'
+            f"Figure license: {escape(meta['license'])} · Generated {escape(meta['generated'])}</text>",
             "</svg>",
         ]
     )
@@ -126,10 +158,17 @@ def svg_document(
 
 
 def render_chart(meta: dict, polity: dict, intervals: list[dict]) -> str:
-    margin = {"top": 74, "right": 32, "bottom": 74, "left": 116}
+    known = [item for item in intervals if item["area"] is not None]
+    year_areas: dict[int, float] = {}
+    for item in known:
+        year_areas[item["to"]] = year_areas.get(item["to"], 0.0) + item["area"]
+    event_years = sorted(year_areas)
+    event_rows = max(1, math.ceil(len(event_years) / 4))
+    extra_height = max(0, event_rows - 1) * 22
+    chart_height = CHART_HEIGHT + extra_height
+    margin = {"top": 162, "right": 58, "bottom": chart_height - 662, "left": 142}
     plot_w = CHART_WIDTH - margin["left"] - margin["right"]
-    plot_h = CHART_HEIGHT - margin["top"] - margin["bottom"]
-    known = [item for item in intervals if item["area"]]
+    plot_h = chart_height - margin["top"] - margin["bottom"]
     if not known:
         known = []
     areas = [item["area"] for item in known] or [1.0]
@@ -157,13 +196,20 @@ def render_chart(meta: dict, polity: dict, intervals: list[dict]) -> str:
     )
 
     subtitle = (
-        f"Cumulative land ceded, {format_year(x_min)} – {format_year(x_max)} · "
-        f"{len(intervals)} cession record{'s' if len(intervals) != 1 else ''}"
+        f"Cumulative recorded area · {len(intervals)} cession records · "
+        f"{format_year(x_min)} to {format_year(x_max)}"
     )
+    total_area = format_area(polity.get("totalArea"))
     body = [
-        f'<text x="{margin["left"]}" y="40" font-family="sans-serif" font-size="26" fill="{INK}">{escape(title)}</text>',
-        f'<text x="{margin["left"]}" y="62" font-family="sans-serif" font-size="15" fill="{MUTED}">'
+        f'<text x="72" y="42" font-family="sans-serif" font-size="12" font-weight="700" '
+        f'letter-spacing="2" fill="{CESSION}">NATIVE LAND CESSIONS - CUMULATIVE RECORD</text>',
+        f'<text x="72" y="82" font-family="sans-serif" font-size="32" font-weight="600" fill="{INK}">{escape(title.replace("—", "-"))}</text>',
+        f'<text x="72" y="111" font-family="sans-serif" font-size="16" fill="{MUTED}">'
         f"{escape(subtitle)}</text>",
+        f'<rect x="850" y="40" width="278" height="82" rx="4" fill="#f2f6f5"/>',
+        f'<text x="872" y="68" font-family="sans-serif" font-size="11" font-weight="700" '
+        f'letter-spacing="1.2" fill="{MUTED}">RECORDED TOTAL</text>',
+        f'<text x="872" y="101" font-family="sans-serif" font-size="26" font-weight="600" fill="{CESSION}">{escape(total_area)}</text>',
     ]
 
     for tick in nice_ticks(0, y_max, 4):
@@ -186,27 +232,68 @@ def render_chart(meta: dict, polity: dict, intervals: list[dict]) -> str:
             f'font-size="13" fill="{MUTED}">{escape(format_year(int(tick)))}</text>'
         )
 
+    baseline = margin["top"] + plot_h
     body.append(
-        f'<line x1="{margin["left"]}" x2="{margin["left"] + plot_w}" y1="{margin["top"] + plot_h}" '
-        f'y2="{margin["top"] + plot_h}" stroke="{AXIS}"/>'
+        f'<line x1="{margin["left"]}" x2="{margin["left"] + plot_w}" y1="{baseline}" '
+        f'y2="{baseline}" stroke="{AXIS}" stroke-width="1.2"/>'
     )
 
     points = [f"M{sx(x_min):.1f},{sy(0):.1f}"]
-    running = 0.0
-    for item in sorted(known, key=lambda entry: entry["to"]):
-        running += item["area"]
-        points.append(f"H{sx(item['to']):.1f}V{sy(running):.1f}")
+    events = []
+    cumulative = 0.0
+    year_colors = {
+        event_year: cession_color(index, len(event_years))
+        for index, event_year in enumerate(event_years)
+    }
+    for event_year in event_years:
+        cumulative += year_areas[event_year]
+        x = sx(event_year)
+        y = sy(cumulative)
+        points.append(f"H{x:.1f}V{y:.1f}")
+        events.append((x, y, event_year, cumulative))
     points.append(f"H{sx(x_max):.1f}")
     line = "".join(points)
-    body.append(f'<path d="{line}L{sx(x_max):.1f},{sy(0):.1f}Z" fill="{CESSION}" fill-opacity="0.1"/>')
+    body.append(f'<path d="{line}L{sx(x_max):.1f},{sy(0):.1f}Z" fill="{CESSION}" fill-opacity="0.12"/>')
     body.append(f'<path d="{line}" stroke="{CESSION}" stroke-width="4" fill="none" stroke-linejoin="round"/>')
+    for x, y, event_year, cumulative_area in events:
+        color = year_colors[event_year]
+        body.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{baseline}" y2="{baseline + 8}" stroke="{color}" stroke-width="2"/>')
+        body.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{color}" stroke="#ffffff" stroke-width="2"><title>{escape(format_year(event_year))}: {cumulative_area:,.0f} km² cumulative</title></circle>')
 
+    event_top = baseline + 133
     body.append(
-        f'<text x="{margin["left"]}" y="{CHART_HEIGHT - 26}" font-family="sans-serif" font-size="12" fill="{MUTED}">'
-        f"Step height is the recorded polygon area; gaps mean no record, not absence of people.</text>"
+        f'<text x="72" y="{event_top}" font-family="sans-serif" font-size="12" font-weight="700" '
+        f'letter-spacing="1.2" fill="{INK}">RECORDED AREA BY CESSION YEAR · KM²</text>'
     )
+    event_column_width = (CHART_WIDTH - 144) / 4
+    for index, event_year in enumerate(event_years):
+        column = index // event_rows
+        row = index % event_rows
+        x = 72 + column * event_column_width
+        y = event_top + 29 + row * 22
+        color = year_colors[event_year]
+        body.append(f'<circle cx="{x + 5}" cy="{y - 4}" r="4" fill="{color}"/>')
+        body.append(
+            f'<text x="{x + 16}" y="{y}" font-family="sans-serif" font-size="12" fill="{INK}">'
+            f"{escape(format_year(event_year))} · {year_areas[event_year]:,.0f}</text>"
+        )
+
+    notes_top = event_top + 29 + event_rows * 22 + 8
+    chart_height = max(CHART_HEIGHT, notes_top + 65 + 35 + 96)
+    body.extend([
+        f'<defs><linearGradient id="cession-time" x1="0" x2="1" y1="0" y2="0">'
+        f'<stop offset="0%" stop-color="#f6d55c"/><stop offset="52%" stop-color="#ed8b23"/>'
+        f'<stop offset="100%" stop-color="#c62828"/></linearGradient></defs>',
+        f'<text x="72" y="{notes_top}" font-family="sans-serif" font-size="12" fill="{MUTED}">'
+        f"Gaps indicate no cession record in the schedule—not absence of Native presence or land use.</text>",
+        f'<rect x="72" y="{notes_top + 30}" width="220" height="10" rx="2" fill="url(#cession-time)"/>',
+        f'<text x="72" y="{notes_top + 57}" font-family="sans-serif" font-size="11" fill="{INK}">Earlier recorded cessions</text>',
+        f'<text x="292" y="{notes_top + 57}" text-anchor="end" font-family="sans-serif" font-size="11" fill="{INK}">Later recorded cessions</text>',
+        f'<text x="72" y="{notes_top + 19}" font-family="sans-serif" font-size="12" fill="{MUTED}">'
+        f"Areas are computed from digitised polygons; shared cessions are credited in full to each signatory nation.</text>",
+    ])
     source = source_for(meta)
-    return svg_document(meta, source, title, description, CHART_WIDTH, CHART_HEIGHT, body)
+    return svg_document(meta, source, title, description, CHART_WIDTH, chart_height, body)
 
 
 def render_map(
@@ -218,19 +305,17 @@ def render_map(
     states: list[dict],
     relief: list[dict],
 ) -> str:
-    header = 56
-    footer = 64
-    pad = 26
-    content_h = 500
-    height = header + content_h + footer
-    title = f"Land ceded by {polity['name']} by {format_year(year)}"
-    active = [item for item in intervals if item["to"] <= year]
+    header = 116
+    pad = 30
+    content_h = 570
+    title = f"Land still unceded by {polity['name']} after {format_year(year)}"
+    active = [item for item in intervals if item["to"] >= year]
     touched: set[str] = set()
     for item in active:
         touched.update(item.get("s") or [])
     states_touched = sorted(touched)
     description = (
-        f"All land recorded as ceded by {polity['name']} up to {format_year(year)}, "
+        f"Recorded cessions by {polity['name']} still ahead of {format_year(year)}, "
         f"equirectangular projection framed to the recorded polygons, with modern state "
         f"boundaries for context. The ceded land now lies in: "
         f"{', '.join(states_touched) if states_touched else 'no mapped state'}. "
@@ -240,19 +325,28 @@ def render_map(
         f"Cession boundaries are one interpretation of the 1899 schedule, not surveyed borders."
     )
 
-    layers: list[tuple[list, str]] = []
-    state_layers: list[tuple[list, str]] = []
+    all_years = sorted({item["to"] for item in intervals})
+    year_colors = {
+        event_year: cession_color(index, len(all_years))
+        for index, event_year in enumerate(all_years)
+    }
+    active_years = [event_year for event_year in all_years if event_year >= year]
+    active_year_colors = {event_year: year_colors[event_year] for event_year in active_years}
+    layers: list[tuple[dict, str, int]] = []
+    state_layers: list[tuple[dict, str]] = []
+    state_label_bounds: dict[str, list[float]] = {}
     min_lon = min_lat = math.inf
     max_lon = max_lat = -math.inf
+    active_ids = {id(item) for item in active}
     for item in intervals:
         index = item["i"]
         if index is None or index >= len(geometries) or geometries[index] is None:
             continue
-        if not any(entry is item for entry in active):
+        if id(item) not in active_ids:
             continue
         geometry = geometries[index]
         polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
-        fill = CESSION
+        fill = active_year_colors[item["to"]]
         for polygon in polygons:
             for ring in polygon:
                 for lon, lat in ring:
@@ -260,16 +354,23 @@ def render_map(
                     max_lon = max(max_lon, lon)
                     min_lat = min(min_lat, lat)
                     max_lat = max(max_lat, lat)
-                layers.append((ring, fill))
+        layers.append((geometry, fill, item["to"]))
 
     for entry in states:
         if entry.get("name") not in touched:
             continue
         geometry = entry["geometry"]
         polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+        bounds = [math.inf, math.inf, -math.inf, -math.inf]
         for polygon in polygons:
             for ring in polygon:
-                state_layers.append((ring, STATE_LINE))
+                for lon, lat in ring:
+                    bounds[0] = min(bounds[0], lon)
+                    bounds[1] = min(bounds[1], lat)
+                    bounds[2] = max(bounds[2], lon)
+                    bounds[3] = max(bounds[3], lat)
+        state_layers.append((geometry, STATE_LINE))
+        state_label_bounds[entry["name"]] = bounds
 
     if not math.isfinite(min_lon):
         if relief:
@@ -309,9 +410,15 @@ def render_map(
         )
 
     body = [
-        f'<text x="16" y="34" font-family="sans-serif" font-size="26" fill="{INK}">{escape(title)}</text>',
+        f'<text x="40" y="36" font-family="sans-serif" font-size="12" font-weight="700" '
+        f'letter-spacing="2" fill="{CESSION}">NATIVE LAND CESSIONS · REMAINING AFTER {escape(format_year(year))}</text>',
+        f'<text x="40" y="74" font-family="sans-serif" font-size="30" font-weight="600" fill="{INK}">{escape(title)}</text>',
+        f'<text x="40" y="101" font-family="sans-serif" font-size="14" fill="{MUTED}">'
+        f"{len(active)} cession records from {format_year(year)} onward · {format_area(sum(item.get('area') or 0 for item in active))} recorded area</text>",
         f'<defs><clipPath id="map-clip"><rect x="0" y="{header}" width="{MAP_WIDTH}" '
-        f'height="{content_h}"/></clipPath></defs>',
+        f'height="{content_h}"/></clipPath><linearGradient id="cession-time" x1="0" x2="1" y1="0" y2="0">'
+        f'<stop offset="0%" stop-color="#f6d55c"/><stop offset="52%" stop-color="#ed8b23"/>'
+        f'<stop offset="100%" stop-color="#c62828"/></linearGradient></defs>',
         f'<rect x="0" y="{header}" width="{MAP_WIDTH}" height="{content_h}" fill="#f7f5ef"/>',
         '<g clip-path="url(#map-clip)">',
     ]
@@ -344,17 +451,39 @@ def render_map(
 
     body.extend(relief_images)
 
-    for ring, color in state_layers:
-        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (project(lon, lat) for lon, lat in ring))
+    for geometry, color, event_year in layers:
+        polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+        paths = []
+        for polygon in polygons:
+            for ring in polygon:
+                points = [project(lon, lat) for lon, lat in ring]
+                paths.append("M" + "L".join(f"{x:.1f},{y:.1f}" for x, y in points) + "Z")
         body.append(
-            f'<polygon points="{points}" fill="none" stroke="{color}" stroke-width="0.7"/>'
+            f'<path d="{"".join(paths)}" fill="{color}" fill-opacity="0.9" fill-rule="evenodd" '
+            f'stroke="#171717" stroke-width="1.15" stroke-linejoin="round">'
+            f'<title>{escape(format_year(event_year))} cession</title></path>'
         )
 
-    for ring, color in layers:
-        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in (project(lon, lat) for lon, lat in ring))
+    for geometry, color in state_layers:
+        polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+        paths = []
+        for polygon in polygons:
+            for ring in polygon:
+                points = [project(lon, lat) for lon, lat in ring]
+                paths.append("M" + "L".join(f"{x:.1f},{y:.1f}" for x, y in points) + "Z")
         body.append(
-            f'<polygon points="{points}" fill="{color}" fill-opacity="0.10" stroke="{color}" '
-            f'stroke-width="1.2" stroke-linejoin="round"/>'
+            f'<path d="{"".join(paths)}" fill="none" stroke="{color}" stroke-width="1.1"/>'
+        )
+
+    for name, bounds in state_label_bounds.items():
+        lon = (bounds[0] + bounds[2]) / 2
+        lat = (bounds[1] + bounds[3]) / 2
+        x, y = project(lon, lat)
+        body.append(
+            f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="middle" dominant-baseline="middle" '
+            f'font-family="sans-serif" font-size="12" font-weight="700" letter-spacing="1" '
+            f'fill="{INK}" paint-order="stroke" stroke="#f7f5ef" stroke-width="3.5" stroke-linejoin="round">'
+            f"{escape(name.upper())}</text>"
         )
 
     body.append("</g>")
@@ -363,12 +492,62 @@ def render_map(
         f'fill="none" stroke="{AXIS}"/>'
     )
 
-    if states_touched:
-        names = ", ".join(states_touched)
+    legend_top = header + content_h + 30
+    legend_height = 72
+    first_recorded_year = all_years[0] if all_years else None
+    last_recorded_year = all_years[-1] if all_years else None
+    context_lines = wrapped_text(
+        "Modern state boundaries shown for context; labels identify states overlapping recorded ceded areas.",
+        145,
+    )
+    touched_lines = wrapped_text(
+        "Ceded land now lies in: " + (", ".join(states_touched) if states_touched else "no mapped state"),
+        145,
+    )
+    caveat_lines = wrapped_text(
+        "Cession boundaries follow Royce's historical schedule and are not surveyed borders. "
+        "Areas use digitised polygons; shared cessions are credited in full to each nation.",
+        145,
+    )
+    caption_top = legend_top + legend_height + 24
+    context_lines.extend(touched_lines)
+    for index, line in enumerate(context_lines):
         body.append(
-            f'<text x="16" y="{height - 38}" font-family="sans-serif" font-size="13" fill="{MUTED}">'
-            f"Ceded land now lies in: {escape(names)}</text>"
+            f'<text x="40" y="{caption_top + index * 19}" font-family="sans-serif" font-size="13" fill="{MUTED}">'
+            f"{escape(line)}</text>"
         )
+    caveat_top = caption_top + len(context_lines) * 19
+    for index, line in enumerate(caveat_lines):
+        body.append(
+            f'<text x="40" y="{caveat_top + index * 19}" font-family="sans-serif" font-size="13" fill="{MUTED}">'
+            f"{escape(line)}</text>"
+        )
+    source_top = caveat_top + len(caveat_lines) * 19
+    source_lines = wrapped_text(
+        "Sources: Royce (1899), digitised by the U.S. Forest Service with Claudio Saunt; "
+        "state boundaries: Natural Earth (CC0); relief: NASA SRTM (public domain).",
+        145,
+    )
+    for index, line in enumerate(source_lines):
+        body.append(
+            f'<text x="40" y="{source_top + index * 17}" font-family="sans-serif" font-size="12" fill="{MUTED}">'
+            f"{escape(line)}</text>"
+        )
+
+    height = source_top + len(source_lines) * 17 + legend_height + 58
+    body.extend([
+        f'<text x="40" y="{legend_top}" font-family="sans-serif" font-size="12" font-weight="700" '
+        f'letter-spacing="1.4" fill="{INK}">CESSION CHRONOLOGY · ALL RECORDED EVENTS</text>',
+        f'<line x1="426" x2="460" y1="{legend_top - 4}" y2="{legend_top - 4}" stroke="{STATE_LINE}" stroke-width="2"/>',
+        f'<text x="468" y="{legend_top}" font-family="sans-serif" font-size="12" fill="{MUTED}">Modern state boundary</text>',
+        f'<rect x="40" y="{legend_top + 12}" width="300" height="12" rx="2" fill="url(#cession-time)"/>',
+        f'<text x="40" y="{legend_top + 42}" font-family="sans-serif" font-size="12" fill="{INK}">'
+        f'Earlier · {escape(format_year(first_recorded_year)) if first_recorded_year is not None else "no records"}</text>',
+        f'<text x="340" y="{legend_top + 42}" text-anchor="end" font-family="sans-serif" font-size="12" fill="{INK}">'
+        f'Later · {escape(format_year(last_recorded_year)) if last_recorded_year is not None else "no records"}</text>',
+        f'<text x="40" y="{legend_top + 60}" font-family="sans-serif" font-size="11" fill="{MUTED}">'
+        f'Yellow to red follows recorded cession order; it does not show original territory or current holdings.</text>',
+    ])
 
     if not active:
         body.append(
@@ -470,7 +649,7 @@ def main(argv: list[str] | None = None) -> int:
                 path = data_dir / "terrain" / Path(entry["file"]).name
                 if path.exists():
                     relief.append({**entry, "path": str(path)})
-            map_path = out_dir / f"{base}-ceded-by-{year}.svg"
+            map_path = out_dir / f"{base}-remaining-after-{year}.svg"
             map_path.write_text(
                 render_map(meta, polity, intervals, geometries, year, states, relief),
                 encoding="utf-8",

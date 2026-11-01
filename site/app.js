@@ -12,6 +12,8 @@ const state = {
   selected: null,
   shard: null,
   intervals: [],
+  timelineYears: [],
+  cessionColors: new Map(),
   letter: "",
   year: 0,
   playing: false,
@@ -51,7 +53,7 @@ function cacheDom() {
   const ids = [
     "landing", "app", "enter", "enter-link", "back-link", "alpha", "plates",
     "search", "list-meta", "polity-list", "index-view", "detail-view", "back-to-index",
-    "polity-name", "map", "cession-rows", "play", "year", "year-label", "show-all",
+    "polity-name", "map", "map-legend", "cession-rows", "play", "year", "year-label", "show-all",
     "footer-credit",
   ];
   for (const id of ids) dom[id] = document.getElementById(id);
@@ -178,16 +180,21 @@ async function selectPolity(key) {
   }
   state.shard = state.shardCache.get(polity.shard) || {};
   state.intervals = state.series.get(key) || [];
+  state.timelineYears = [...new Set(state.intervals.map((item) => item.to))].sort((a, b) => a - b);
+  if (!state.timelineYears.length) state.timelineYears = [polity.from];
+  state.cessionColors = new Map(
+    state.timelineYears.map((year, index) => [year, cessionColor(index, state.timelineYears.length)]),
+  );
 
   dom["index-view"].hidden = true;
   dom["detail-view"].hidden = false;
   dom["polity-name"].textContent = polity.name;
   document.title = `${polity.name} — Native Land Cessions`;
 
-  dom.year.min = String(polity.from);
-  dom.year.max = String(polity.to);
+  dom.year.min = "0";
+  dom.year.max = String(state.timelineYears.length - 1);
+  dom.year.step = "1";
   const focus = focusYear(polity);
-  dom.year.value = String(focus);
 
   for (const button of dom["polity-list"].querySelectorAll("button")) {
     if (button.dataset.key === key) button.setAttribute("aria-current", "true");
@@ -211,17 +218,18 @@ function showIndex() {
 function focusYear(polity) {
   const known = state.intervals.filter((item) => item.area !== null);
   if (!known.length) return polity.from;
-  return known.reduce((best, item) => (item.to > best.to ? item : best), known[0]).to;
+  return known.reduce((best, item) => (item.to < best.to ? item : best), known[0]).to;
 }
 
 function setYear(year) {
   state.year = year;
-  dom.year.value = String(year);
+  const index = state.timelineYears.indexOf(year);
+  dom.year.value = String(index < 0 ? 0 : index);
   dom["year-label"].textContent = formatYear(year);
   if (state.selected) {
     dom.map.setAttribute(
       "aria-label",
-      `Ceded land of ${state.selected.name} by ${formatYear(year)}`,
+      `Cessions of ${state.selected.name} still ahead of ${formatYear(year)}`,
     );
   }
   updateMapVisibility();
@@ -235,7 +243,12 @@ function renderCessionTable() {
     const tr = document.createElement("tr");
     const year = document.createElement("td");
     year.className = "cell-year";
-    year.textContent = formatYear(item.to);
+    const swatch = document.createElement("span");
+    swatch.className = "cell-swatch";
+    swatch.style.background = state.cessionColors.get(item.to) || "#0072b2";
+    const yearText = document.createElement("span");
+    yearText.textContent = formatYear(item.to);
+    year.append(swatch, yearText);
     const area = document.createElement("td");
     area.className = "cell-area";
     area.textContent = formatArea(item.area);
@@ -310,6 +323,53 @@ function nationBounds() {
   return box;
 }
 
+function cessionColor(index, count) {
+  const stops = ["#f6d55c", "#ed8b23", "#c62828"].map((color) =>
+    color.match(/[a-f0-9]{2}/gi).map((channel) => Number.parseInt(channel, 16)),
+  );
+  const progress = count <= 1 ? 0 : index / (count - 1);
+  const segment = Math.min(1, Math.floor(progress * 2));
+  const withinSegment = progress * 2 - segment;
+  const channels = stops[segment].map((value, channel) =>
+    Math.round(value + (stops[segment + 1][channel] - value) * withinSegment),
+  );
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function sectionLabel(section) {
+  return section.from === section.to ? String(section.from) : `${section.from}\u2013${section.to}`;
+}
+
+function renderLegend() {
+  const node = dom["map-legend"];
+  if (!node) return;
+  clear(node);
+  const title = document.createElement("span");
+  title.className = "legend-title";
+  title.textContent = "Cession chronology";
+  node.appendChild(title);
+
+  const firstYear = state.timelineYears[0];
+  const lastYear = state.timelineYears[state.timelineYears.length - 1];
+  const earlier = document.createElement("span");
+  earlier.className = "chronology-label";
+  earlier.textContent = `Earlier · ${formatYear(firstYear)}`;
+  const ramp = document.createElement("span");
+  ramp.className = "chronology-ramp";
+  ramp.setAttribute("aria-hidden", "true");
+  const later = document.createElement("span");
+  later.className = "chronology-label";
+  later.textContent = `Later · ${formatYear(lastYear)}`;
+  const note = document.createElement("span");
+  note.className = "chronology-note";
+  note.textContent = "Remaining territory reddens as each recorded cession passes.";
+  node.append(earlier, ramp, later, note);
+  node.setAttribute(
+    "aria-label",
+    `Cession chronology: yellow marks the earliest record, ${formatYear(firstYear)}; red marks the latest, ${formatYear(lastYear)}. Colors show recorded cession order, not original territory or current holdings.`,
+  );
+}
+
 function renderMap() {
   const node = dom.map;
   clear(node);
@@ -378,6 +438,7 @@ function renderMap() {
   node.appendChild(svg("rect", { x: 0.5, y: 0.5, width: width - 1, height: height - 1, class: "map-frame" }));
 
   state.map = { group, stateGroup, relief, labels, width, height, pad: 0.05 };
+  renderLegend();
   updateMapVisibility();
 }
 
@@ -463,16 +524,16 @@ function fitMap(visible) {
 function updateMapVisibility() {
   if (!state.map) return;
   const year = state.year;
-  let latestTo = -Infinity;
-  for (const item of state.intervals) if (item.to <= year) latestTo = Math.max(latestTo, item.to);
-
+  const stepIndex = Math.max(0, state.timelineYears.indexOf(year));
+  const fill = cessionColor(stepIndex, state.timelineYears.length);
   const shown = [];
   for (const path of state.map.group.querySelectorAll("path")) {
     const to = Number(path.dataset.to);
-    const done = year >= to;
-    path.style.display = state.showAll || done ? "" : "none";
-    path.style.opacity = to === latestTo ? "1" : done ? "0.85" : "0.4";
-    if (done) shown.push(path);
+    const remaining = to >= year;
+    path.style.fill = fill;
+    path.style.display = state.showAll || remaining ? "" : "none";
+    path.style.opacity = state.showAll && !remaining ? "0.4" : "1";
+    if (remaining) shown.push(path);
   }
 
   if (state.showAll) {
@@ -486,7 +547,7 @@ function startPlay() {
   if (state.playing || !state.selected) return;
   state.playing = true;
   dom.play.textContent = "❚❚";
-  state.timer = window.setInterval(tick, 80);
+  state.timer = window.setInterval(tick, 450);
 }
 
 function stopPlay() {
@@ -497,11 +558,9 @@ function stopPlay() {
 }
 
 function tick() {
-  const polity = state.selected;
-  if (!polity) return stopPlay();
-  const span = polity.to - polity.from;
-  const step = Math.max(1, Math.round(span / 300));
-  const next = state.year + step > polity.to ? polity.from : state.year + step;
+  if (!state.selected || !state.timelineYears.length) return stopPlay();
+  const current = state.timelineYears.indexOf(state.year);
+  const next = state.timelineYears[(current + 1) % state.timelineYears.length];
   setYear(next);
 }
 
@@ -685,7 +744,8 @@ function wireEvents() {
   dom.play.addEventListener("click", () => (state.playing ? stopPlay() : startPlay()));
   dom.year.addEventListener("input", (event) => {
     stopPlay();
-    setYear(Number(event.target.value));
+    const year = state.timelineYears[Number(event.target.value)];
+    if (year !== undefined) setYear(year);
   });
   dom["show-all"].addEventListener("change", (event) => {
     state.showAll = event.target.checked;

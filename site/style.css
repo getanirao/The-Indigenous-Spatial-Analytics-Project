@@ -218,11 +218,75 @@ a:hover { text-decoration-color: currentColor; }
 }
 
 .cession-outline {
-  fill: none;
-  stroke: #a8322a;
-  stroke-width: 1.35;
+  fill: inherit; /* let attribute or JS dictate fill */
+  stroke: #171717;
+  stroke-width: 1.1;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.7rem;
+  padding: 0.65rem 0.9rem 0.75rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+}
+
+.legend-title {
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 0.3rem;
+}
+
+.chronology-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chronology-ramp {
+  display: inline-block;
+  width: min(15rem, 34vw);
+  height: 0.8rem;
+  border: 1px solid rgba(28, 27, 24, 0.28);
+  background: linear-gradient(90deg, #f6d55c 0%, #ed8b23 52%, #c62828 100%);
+}
+
+.chronology-note {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  white-space: nowrap;
+}
+
+.legend-swatch,
+.cell-swatch {
+  display: inline-block;
+  border: 1px solid rgba(28, 27, 24, 0.28);
+}
+
+.legend-swatch {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.cell-swatch {
+  width: 0.62rem;
+  height: 0.62rem;
+  margin-right: 0.4rem;
+  vertical-align: middle;
 }
 
 .state-label {
